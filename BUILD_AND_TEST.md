@@ -148,6 +148,11 @@ WINTAP_ENABLE_EXECVE_SENSOR=true \
 make run
 ```
 
+Direct Parquet bypasses Esper serializers and only writes payload fields that are
+explicitly flattened by `DirectParquetSink`. SELinux events are currently intended
+for the normal ETL path; direct-Parquet SELinux rows may omit SELinux-specific
+payload fields until that flattening path is extended.
+
 ## Smoke Tests
 
 See [`devtools/README.md`](devtools/README.md) for full details.

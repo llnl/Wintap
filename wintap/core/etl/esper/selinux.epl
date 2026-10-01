@@ -1,0 +1,78 @@
+@Name('selinux-avc')
+@Description('Pass through SELinux AVC audit events')
+@EventRepresentation(map)
+context Every10Seconds select istream
+  PID,
+  PidHash,
+  ProcessName,
+  AgentId,
+  eventTime as EventTime,
+  SELinuxAvc.sContext as SContext,
+  SELinuxAvc.tContext as TContext,
+  SELinuxAvc.tClass as TClass,
+  SELinuxAvc.requestedMask as RequestedMask,
+  SELinuxAvc.deniedMask as DeniedMask,
+  SELinuxAvc.auditedMask as AuditedMask,
+  SELinuxAvc.requestedPerms as RequestedPerms,
+  SELinuxAvc.deniedPerms as DeniedPerms,
+  SELinuxAvc.result as Result,
+  SELinuxAvc.enforcing as Enforcing,
+  SELinuxAvc.policyEpoch as PolicyEpoch,
+  sum(SELinuxAvc.eventCount) as EventCount,
+  min(SELinuxAvc.firstSeenEventTime) as FirstSeen,
+  max(SELinuxAvc.lastSeenEventTime) as LastSeen,
+  'SELinuxAvc' as MessageType
+from WintapMessage(CAST(messageType, string) = 'SELinuxAvc') as msg
+group by PID, PidHash, ProcessName, AgentId, eventTime, SELinuxAvc.sContext, SELinuxAvc.tContext, SELinuxAvc.tClass, SELinuxAvc.requestedMask, SELinuxAvc.deniedMask, SELinuxAvc.auditedMask, SELinuxAvc.requestedPerms, SELinuxAvc.deniedPerms, SELinuxAvc.result, SELinuxAvc.enforcing, SELinuxAvc.policyEpoch
+having count(*) > 0
+output snapshot when terminated;
+
+@Name('selinux-transition')
+@Description('Pass through SELinux context transition events')
+@EventRepresentation(map)
+context Every10Seconds select istream
+  PID,
+  PidHash,
+  ProcessName,
+  AgentId,
+  eventTime as EventTime,
+  SELinuxTransition.oldSid as OldSid,
+  SELinuxTransition.newSid as NewSid,
+  SELinuxTransition.oldContext as OldContext,
+  SELinuxTransition.newContext as NewContext,
+  SELinuxTransition.exeFile as ExeFile,
+  SELinuxTransition.policyEpoch as PolicyEpoch,
+  sum(SELinuxTransition.eventCount) as EventCount,
+  min(SELinuxTransition.firstSeenEventTime) as FirstSeen,
+  max(SELinuxTransition.lastSeenEventTime) as LastSeen,
+  'SELinuxTransition' as MessageType
+from WintapMessage(CAST(messageType, string) = 'SELinuxTransition') as msg
+group by PID, PidHash, ProcessName, AgentId, eventTime, SELinuxTransition.oldSid, SELinuxTransition.newSid, SELinuxTransition.oldContext, SELinuxTransition.newContext, SELinuxTransition.exeFile, SELinuxTransition.policyEpoch
+having count(*) > 0
+output snapshot when terminated;
+
+@Name('selinux-interaction')
+@Description('Summarize SELinux context interaction records')
+@EventRepresentation(map)
+context Every10Seconds select istream
+  SELinuxInteraction.sSid as SSid,
+  SELinuxInteraction.tSid as TSid,
+  SELinuxInteraction.sContext as SContext,
+  SELinuxInteraction.tContext as TContext,
+  SELinuxInteraction.tClass as TClass,
+  SELinuxInteraction.permission as Permission,
+  SELinuxInteraction.requestedMask as RequestedMask,
+  PidHash,
+  ProcessName,
+  AgentId,
+  PID,
+  SELinuxInteraction.policyEpoch as PolicyEpoch,
+  sum(SELinuxInteraction.eventCount) as EventCount,
+  min(SELinuxInteraction.firstSeenEventTime) as FirstSeen,
+  max(SELinuxInteraction.lastSeenEventTime) as LastSeen,
+  SELinuxInteraction.novel as Novel,
+  'SELinuxInteraction' as MessageType
+from WintapMessage(CAST(messageType, string) = 'SELinuxInteraction') as msg
+group by SELinuxInteraction.sSid, SELinuxInteraction.tSid, SELinuxInteraction.sContext, SELinuxInteraction.tContext, SELinuxInteraction.tClass, SELinuxInteraction.permission, SELinuxInteraction.requestedMask, PidHash, ProcessName, AgentId, PID, SELinuxInteraction.policyEpoch, SELinuxInteraction.novel
+having count(*) > 0
+output snapshot when terminated

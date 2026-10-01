@@ -69,6 +69,9 @@ namespace gov.llnl.wintap.platform.linux.collect
         public static extern IntPtr bpf_program__attach(IntPtr prog);
 
         [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern long libbpf_get_error(IntPtr ptr);
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
         public static extern int bpf_link__destroy(IntPtr link);
 
         // Map management
@@ -88,6 +91,18 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
         public static extern int bpf_map_lookup_elem(int fd, ref uint key, out ulong value);
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int bpf_map_lookup_elem(int fd, IntPtr key, IntPtr value);
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int bpf_map_update_elem(int fd, IntPtr key, IntPtr value, ulong flags);
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int bpf_map_delete_elem(int fd, IntPtr key);
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int bpf_map_get_next_key(int fd, IntPtr key, IntPtr next_key);
 
         // Ring buffer
         [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]

@@ -304,11 +304,15 @@ namespace gov.llnl.wintap.core.infrastructure
                         // For non-Process events: resolve the owning process
                         ProcessRecord ownerProcess = null;
                         bool usedCurrentProcessCache = false;
-                        bool hasPrepopulatedFileIdentity = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File &&
+                        bool canUsePrepopulatedIdentity = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File ||
+                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxAvc ||
+                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxTransition ||
+                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxInteraction;
+                        bool hasPrepopulatedIdentity = canUsePrepopulatedIdentity &&
                             !string.IsNullOrWhiteSpace(streamedEvent.PidHash) &&
                             !string.IsNullOrWhiteSpace(streamedEvent.ProcessName);
 
-                        if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File && !hasPrepopulatedFileIdentity)
+                        if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File && !hasPrepopulatedIdentity)
                         {
                             usedCurrentProcessCache = _processResolver.TryResolveCurrentProcessAtTime(streamedEvent.PID, eventTimeUtc, out ownerProcess);
                             if (usedCurrentProcessCache)
@@ -321,7 +325,7 @@ namespace gov.llnl.wintap.core.infrastructure
                             }
                         }
 
-                        if (hasPrepopulatedFileIdentity)
+                        if (hasPrepopulatedIdentity)
                         {
                             ownerProcess = new ProcessRecord
                             {

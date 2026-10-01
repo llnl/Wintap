@@ -63,7 +63,10 @@ namespace gov.llnl.wintap.collect.models
             WintapAlert,
 
             // Platform-specific (Linux)
-            Sysdig
+            Sysdig,
+            SELinuxAvc,
+            SELinuxTransition,
+            SELinuxInteraction
         }
         public enum ActivityTypeEnum { Start, Stop, Refresh, Rundown, Load, Unload, PsSetLoadImageNotifyRoutine, TerminateProcess, CreateSymbolicLink, SetThreadContext, OpenProcess, OpenThread, Read, Write, Open, Close, Delete, DeleteValue, CreateKey, DeleteKey, EventWritten, HighCpuUsage, TcpIpAccept, TcpIpRecv, TcpIpTCPCopy, TcpIpReconnect, TcpIpRetransmit, TcpIpDisconnect, TcpIpARPCopy, TcpIpDupACK, TcpIpFullACK, TcpIpPartACK, TcpIpConnect, TcpIpSend, TcpIpFail, TcpIpRecvIPV6, TcpIpSendIPV6, UdpIpFail, UdpIpSend, UdpIpRecv, Other, MemCommit, MemFree, MemReserve }; 
         public enum DirectionEnum { INBOUND, OUTBOUND };
@@ -141,6 +144,9 @@ namespace gov.llnl.wintap.collect.models
         public ApiCallData ApiCall { get; set; }
         public MemoryMapData MemoryMap { get; set; }
         public SysdigEventData Sysdig { get; set; }
+        public SELinuxAvcData SELinuxAvc { get; set; }
+        public SELinuxTransitionData SELinuxTransition { get; set; }
+        public SELinuxInteractionData SELinuxInteraction { get; set; }
         public WintapAlertData WintapAlert { get; set; }
 
         public class ProcessObject : WintapBase
@@ -532,6 +538,56 @@ namespace gov.llnl.wintap.collect.models
             public string evt_type { get; set; }
             public string proc_name { get; set; }
             public int thread_tid { get; set; }
+        }
+
+        public class SELinuxAvcData : WintapBase
+        {
+            public string SContext { get; set; }
+            public string TContext { get; set; }
+            public string TClass { get; set; }
+            public long RequestedMask { get; set; }
+            public long DeniedMask { get; set; }
+            public long AuditedMask { get; set; }
+            public string RequestedPerms { get; set; }
+            public string DeniedPerms { get; set; }
+            public int Result { get; set; }
+            public bool Enforcing { get; set; }
+            public int PolicyEpoch { get; set; }
+            public int EventCount { get; set; } = 1;
+            public long FirstSeenEventTime { get; set; }
+            public long LastSeenEventTime { get; set; }
+            public int PID { get; set; }
+        }
+
+        public class SELinuxTransitionData : WintapBase
+        {
+            public long OldSid { get; set; }
+            public long NewSid { get; set; }
+            public string OldContext { get; set; }
+            public string NewContext { get; set; }
+            public string ExeFile { get; set; }
+            public int PolicyEpoch { get; set; }
+            public int EventCount { get; set; } = 1;
+            public long FirstSeenEventTime { get; set; }
+            public long LastSeenEventTime { get; set; }
+            public int PID { get; set; }
+        }
+
+        public class SELinuxInteractionData : WintapBase
+        {
+            public long SSid { get; set; }
+            public long TSid { get; set; }
+            public string SContext { get; set; }
+            public string TContext { get; set; }
+            public string TClass { get; set; }
+            public string Permission { get; set; }
+            public long RequestedMask { get; set; }
+            public int EventCount { get; set; } = 1;
+            public long FirstSeenEventTime { get; set; }
+            public long LastSeenEventTime { get; set; }
+            public bool Novel { get; set; }
+            public int PolicyEpoch { get; set; }
+            public int PID { get; set; }
         }
 
         public abstract class WintapBase
