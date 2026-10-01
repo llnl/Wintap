@@ -116,6 +116,7 @@
 		<None Remove="core\etl\esper\process-stop.epl" />
 		<None Remove="core\etl\esper\process.epl" />
 		<None Remove="core\etl\esper\registry.epl" />
+		<None Remove="core\etl\esper\selinux.epl" />
 		<None Remove="core\etl\esper\tcp.epl" />
 		<None Remove="core\etl\esper\udp.epl" />
 		<EmbeddedResource Include="core\etl\esper\default.epl" />
@@ -125,6 +126,7 @@
 		<EmbeddedResource Include="core\etl\esper\process-stop.epl" />
 		<EmbeddedResource Include="core\etl\esper\process.epl" />
 		<EmbeddedResource Include="core\etl\esper\registry.epl" />
+		<EmbeddedResource Include="core\etl\esper\selinux.epl" />
 		<EmbeddedResource Include="core\etl\esper\tcp.epl" />
 		<EmbeddedResource Include="core\etl\esper\udp.epl" />
 		<Content Include="core\etl\esper\*.epl">

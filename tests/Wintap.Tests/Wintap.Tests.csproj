@@ -22,6 +22,8 @@
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsAggregator.cs" Link="FileOpsAggregator.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\DirIdentityIndex.cs" Link="DirIdentityIndex.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsDenyPolicy.cs" Link="FileOpsDenyPolicy.cs" />
+    <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxPermissionDecoder.cs" Link="SELinuxPermissionDecoder.cs" />
+    <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxSidResolver.cs" Link="SELinuxSidResolver.cs" />
     <ProjectReference Include="..\..\wintap\Wintap.csproj" />
   </ItemGroup>
 

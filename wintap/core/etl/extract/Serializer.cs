@@ -497,8 +497,10 @@ namespace gov.llnl.wintap.core.etl.extract
             try
             {
                 string esperQuery = readQueryFromFile(queryPath);
-                EPStatement newStatement = gov.llnl.wintap.core.infrastructure.EventChannel.CompileDeploy(esperQuery, queryName).Statements[0];
-                newStatement.Events += ProcStatement_Events;
+                foreach (EPStatement statement in gov.llnl.wintap.core.infrastructure.EventChannel.CompileDeploy(esperQuery, queryName).Statements)
+                {
+                    statement.Events += ProcStatement_Events;
+                }
                 WintapLogger.Log.Append("EPL created and event handlers attached on " + GetType().Name, LogLevel.Debug);
             }
             catch (Exception ex)

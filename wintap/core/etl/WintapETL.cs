@@ -38,6 +38,7 @@ namespace gov.llnl.wintap.core.etl
         private FileSerializer fileSensor;
         private RegistrySerializer regSensor;
         private FocusChangeSerializer fcSensor;
+        private SELinuxSerializer selinuxSensor;
         private DefaultSerializer defaultSensor;
         private CacheManager cacheMgr;
         private List<Serializer> sensors;
@@ -105,6 +106,7 @@ namespace gov.llnl.wintap.core.etl
             fileSensor = new FileSerializer(esperNameSpacePrefix + "file.epl");
             fcSensor = new FocusChangeSerializer(esperNameSpacePrefix + "focuschange.epl");
             regSensor = new RegistrySerializer(esperNameSpacePrefix + "registry.epl");
+            selinuxSensor = new SELinuxSerializer(esperNameSpacePrefix + "selinux.epl");
             tcpSensor = new TcpConnectionSerializer(new string[] { esperNameSpacePrefix + "tcp.epl" });
             udpSensor = new UdpPacketSerializer(new string[] { esperNameSpacePrefix + "udp.epl" });
             sensors = new List<Serializer>();
@@ -116,6 +118,7 @@ namespace gov.llnl.wintap.core.etl
             sensors.Add(udpSensor);
             sensors.Add(regSensor);
             sensors.Add(fcSensor);
+            sensors.Add(selinuxSensor);
             WintapLogger.Log.Append("All sensors created.  Serializer serialization interval (msec): " + etlConfig.SerializationIntervalSec, LogLevel.Info);
         }
 

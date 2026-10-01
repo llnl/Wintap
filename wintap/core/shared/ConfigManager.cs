@@ -233,6 +233,7 @@ namespace gov.llnl.wintap.core.shared
         public bool Exit { get; set; } = true;
         public bool Network { get; set; } = true;
         public bool FileOps { get; set; } = true;
+        public bool SELinux { get; set; } = true;
         public string FileOpsDenyComms { get; set; } = "";
         public bool ProcessRundown { get; set; } = true;
         public bool EnableBpfDiagMonitor { get; set; } = false;

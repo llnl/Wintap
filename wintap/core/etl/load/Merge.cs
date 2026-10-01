@@ -33,10 +33,10 @@ namespace gov.llnl.wintap.core.etl.load
             // MERGE PARQUET
             try
             {
-                if (parquetSearchRoot.EndsWith("defaultserializer"))
+                if (parquetSearchRoot.EndsWith("defaultserializer") || parquetSearchRoot.EndsWith("selinuxserializer"))
                 {
                     List<string> defaultTypes = new List<string>();
-                    // run merge on each contained type handled by default serializer
+                    // run merge on each contained type handled by multi-type serializers
                     DirectoryInfo defaultRoot = new DirectoryInfo(parquetSearchRoot);
                     if (defaultRoot.Exists)
                     {
@@ -50,7 +50,7 @@ namespace gov.llnl.wintap.core.etl.load
                         }
                         foreach (string defaultMergeType in defaultTypes)
                         {
-                            WintapLogger.Log.Append($"Attempting parquet merge on default serializer type: {defaultMergeType}", LogLevel.Info);
+                            WintapLogger.Log.Append($"Attempting parquet merge on serializer type: {defaultMergeType}", LogLevel.Info);
                             try
                             {
                                 sensorName = defaultMergeType;
@@ -60,12 +60,12 @@ namespace gov.llnl.wintap.core.etl.load
                             }
                             catch(Exception ex)
                             {
-                                WintapLogger.Log.Append($"Could not merge for default serializer type {defaultMergeType}: {ex.Message}", LogLevel.Error);
+                                WintapLogger.Log.Append($"Could not merge for serializer type {defaultMergeType}: {ex.Message}", LogLevel.Error);
                             }
                             
                         }
                     }
-                    // split filenames by '-' to get distinct set of default types
+                    // split filenames by '-' to get distinct set of message types
                 }
                 else
                 {

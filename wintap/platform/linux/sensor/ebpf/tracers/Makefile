@@ -1,6 +1,6 @@
 # Output files
 # CO-RE objects require kernel BTF/vmlinux.h and provide richer kernel-internal context.
-CORE_OBJS = execve_tracer.bpf.o exit_tracer.bpf.o network_ops_tracer.bpf.o file_ops_tracer.bpf.o
+CORE_OBJS = execve_tracer.bpf.o exit_tracer.bpf.o network_ops_tracer.bpf.o file_ops_tracer.bpf.o selinux_tracer.bpf.o
 
 # Tracepoint-only objects avoid vmlinux.h and are the portability fallback tier.
 TRACEPOINT_OBJS = clone_tracer.bpf.o openat_tracer.bpf.o execve_tracepoint.bpf.o exit_tracepoint.bpf.o network_tracepoint.bpf.o file_ops_tracepoint.bpf.o

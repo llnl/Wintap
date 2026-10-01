@@ -29,8 +29,21 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
 
             bool IsEnabled(string sensorKey)
             {
-                // Sensor keys are config properties (Execve, Clone, Exit, Network, FileOps, ProcessRundown).
+                // Sensor keys are config properties (Execve, Clone, Exit, Network, FileOps, SELinux, ProcessRundown).
                 // Defaults live in ConfigRoot, so a missing key still yields a sensible behavior.
+                string compactEnvName = $"WINTAP_ENABLE_{sensorKey.ToUpperInvariant()}_SENSOR";
+                string? enableEnv = Environment.GetEnvironmentVariable(compactEnvName);
+                if (string.IsNullOrWhiteSpace(enableEnv) && sensorKey == "ProcessRundown")
+                {
+                    enableEnv = Environment.GetEnvironmentVariable("WINTAP_ENABLE_PROCESS_RUNDOWN_SENSOR");
+                }
+
+                if (!string.IsNullOrWhiteSpace(enableEnv))
+                {
+                    return enableEnv.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                           enableEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
+                }
+
                 return ConfigManager.GetValue<bool>(sensorKey);
             }
 
@@ -95,6 +108,16 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             else
             {
                 WintapLogger.Log.Append("FileOpsSensor disabled by config (FileOps=false)", LogLevel.Warn);
+            }
+
+            if (IsEnabled("SELinux"))
+            {
+                SELinuxSensor selinuxSensor = new SELinuxSensor();
+                TryStart(selinuxSensor);
+            }
+            else
+            {
+                WintapLogger.Log.Append("SELinuxSensor disabled by config (SELinux=false)", LogLevel.Warn);
             }
 
             if (IsEnabled("ProcessRundown"))
