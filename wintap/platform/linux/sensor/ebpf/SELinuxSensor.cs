@@ -921,23 +921,28 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         private DateTime ConvertKernelTimestampToUtcDateTime(ulong timestampNs)
         {
-            long realtimeNs = unchecked((long)timestampNs) + _monotonicToRealtimeOffsetNs;
-            long ticks = realtimeNs / 100;
-            return DateTime.UnixEpoch.AddTicks(ticks).ToUniversalTime();
+            try
+            {
+                long realtimeNs = checked((long)timestampNs + _monotonicToRealtimeOffsetNs);
+                if (realtimeNs > 0)
+                {
+                    return DateTime.UnixEpoch.AddTicks(realtimeNs / 100).ToUniversalTime();
+                }
+            }
+            catch { }
+
+            return DateTime.UtcNow;
         }
 
         private static long ComputeMonotonicToRealtimeOffsetNs()
         {
-            try
-            {
-                long realtimeNs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000L;
-                long monotonicNs = Stopwatch.GetTimestamp() * 1_000_000_000L / Stopwatch.Frequency;
-                return realtimeNs - monotonicNs;
-            }
-            catch
+            if (clock_gettime(CLOCK_REALTIME, out Timespec realtime) != 0 ||
+                clock_gettime(CLOCK_MONOTONIC, out Timespec monotonic) != 0)
             {
                 return 0;
             }
+
+            return realtime.ToNanoseconds() - monotonic.ToNanoseconds();
         }
 
         protected override void OnStopping()
@@ -959,6 +964,24 @@ namespace gov.llnl.wintap.platform.linux.collect
                 }
             }
             _additionalLinks.Clear();
+        }
+
+        private const int CLOCK_REALTIME = 0;
+        private const int CLOCK_MONOTONIC = 1;
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int clock_gettime(int clkId, out Timespec tp);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Timespec
+        {
+            public long TvSec;
+            public long TvNsec;
+
+            public long ToNanoseconds()
+            {
+                return checked(TvSec * 1_000_000_000L + TvNsec);
+            }
         }
     }
 }
