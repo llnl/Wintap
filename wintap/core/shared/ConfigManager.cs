@@ -220,6 +220,7 @@ namespace gov.llnl.wintap.core.shared
     public class ConfigRoot
     {
         public string DataRoot { get; set; }
+        public string RuntimeRoot { get; set; }
         public bool DisableMCP { get; set; } = true;
         public bool DisableDuckDBUI { get; set; } = true;
         public bool DisableETL { get; set; } = false;

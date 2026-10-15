@@ -8,6 +8,7 @@ using DuckDB.NET.Data;
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.shared;
 using gov.llnl.wintap.core.shared.helpers;
+using gov.llnl.wintap.core.etl.shared;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -27,7 +28,7 @@ namespace gov.llnl.wintap.core.infrastructure
     internal class ProcessResolver : IProcessResolver
     {
         private readonly ProcessHash processHash;
-        private string MAIN_DB_PATH = Path.Combine($@"{Env.FileDataRoot}", "event_store",  "main.duckdb");
+        private string MAIN_DB_PATH = Path.Combine(Paths.EventStorePath, "main.duckdb");
         private DuckDBConnection connection;
         private readonly object _dbLock = new object();
         private readonly ConcurrentDictionary<int, ActiveProcessCacheEntry> _activeProcesses = new ConcurrentDictionary<int, ActiveProcessCacheEntry>();

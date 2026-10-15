@@ -5,6 +5,7 @@
  */
 
 using gov.llnl.wintap.core.shared;
+using gov.llnl.wintap.core.etl.shared;
 using System;
 using System.Collections.Concurrent;
 using System.ComponentModel;
@@ -143,9 +144,8 @@ namespace gov.llnl.wintap.core.infrastructure
             LogName = logName;
             _verbosity = verbosity;
             _maxSize = maxSize;
-            string logDir = Path.Combine(Env.FileDataRoot, "Logs");
-            Directory.CreateDirectory(logDir);
-            _logPath = Path.Combine(logDir, logName + ".log");
+            Directory.CreateDirectory(Paths.LogDataPath);
+            _logPath = Path.Combine(Paths.LogDataPath, logName + ".log");
 
             _pendingEntries = new ConcurrentQueue<LogEntry>();
 

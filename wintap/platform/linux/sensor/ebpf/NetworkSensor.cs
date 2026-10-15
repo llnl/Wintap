@@ -3,6 +3,7 @@ using gov.llnl.wintap.core.collect;
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared.helpers;
 using gov.llnl.wintap.core.shared;
+using gov.llnl.wintap.core.etl.shared;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -114,7 +115,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                                 // Also append a local CSV for immediate DuckDB queries and persistence
                                 try
                                 {
-                                    var diagDir = System.IO.Path.Combine("/var/lib/lintap", "diag");
+                                    var diagDir = Paths.DiagDataPath;
                                     System.IO.Directory.CreateDirectory(diagDir);
                                     var csvPath = System.IO.Path.Combine(diagDir, "diag_counters.csv");
                                     bool writeHeader = !System.IO.File.Exists(csvPath);

@@ -87,7 +87,15 @@ namespace gov.llnl.wintap.core.etl.load
             Utilities.LogStartupConfigurationMessage("ETL startup configuration summary", LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("ETLConfig path: " + Utilities.GetETLConfigPath(), LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("ETLConfig exists: " + File.Exists(Utilities.GetETLConfigPath()), LogLevel.Info);
-            Utilities.LogStartupConfigurationMessage("Data root: " + gov.llnl.wintap.core.shared.Env.FileDataRoot, LogLevel.Info);
+            Utilities.LogStartupConfigurationMessage("Data root: " + Paths.DataRoot, LogLevel.Info);
+            Utilities.LogStartupConfigurationMessage("Runtime root: " + Paths.RuntimeRoot, LogLevel.Info);
+            if (string.Equals(
+                Path.GetFullPath(Paths.DataRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                Path.GetFullPath(Paths.RuntimeRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                Utilities.LogStartupConfigurationMessage("Data and runtime roots are the same; host-specific state will share the data tree.", LogLevel.Warn);
+            }
             Utilities.LogStartupConfigurationMessage("Parquet data path: " + Paths.ParquetDataPath, LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("Serialization interval (sec): " + etlConfig.SerializationIntervalSec, LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("Upload interval (sec): " + etlConfig.UploadIntervalSec, LogLevel.Info);

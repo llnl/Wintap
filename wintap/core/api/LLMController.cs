@@ -3,6 +3,7 @@
 
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared;
+using gov.llnl.wintap.core.etl.shared;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.AI;
@@ -162,7 +163,7 @@ namespace gov.llnl.wintap.core.api
             openAIOptions = new OpenAIClientOptions() { Endpoint = new Uri(Properties.Settings.Default.AiApiUrl) };
 
             string? key = "";
-            key = System.IO.File.ReadAllText(Path.Combine(Env.FileDataRoot, "ai", "api-key.txt"));
+            key = System.IO.File.ReadAllText(Path.Combine(Paths.AiDataPath, "api-key.txt"));
 
             ApiKeyCredential cred = new ApiKeyCredential(key!);
             var openAIClient = new OpenAIClient(cred, openAIOptions).GetChatClient(Properties.Settings.Default.AiModel);
@@ -183,5 +184,4 @@ namespace gov.llnl.wintap.core.api
     }
 
 }
-
 

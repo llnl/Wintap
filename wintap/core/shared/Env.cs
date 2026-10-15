@@ -75,7 +75,7 @@ namespace gov.llnl.wintap.core.shared
         }
 
         /// <summary>
-        /// root of the Wintap data path (e.g. for Logs, parquet, etc)
+        /// root of the shared Wintap data path (directly containing raw_sensor)
         /// </summary>
         static internal string FileDataRoot
         {
@@ -91,6 +91,28 @@ namespace gov.llnl.wintap.core.shared
                 return ResolveDataRoot(
                     _overriddenDataRoot,
                     configDataRoot,
+                    platform,
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+            }
+        }
+
+        /// <summary>
+        /// Root path for host-specific runtime state such as logs and the event store.
+        /// </summary>
+        static internal string FileRuntimeRoot
+        {
+            get
+            {
+                string configRuntimeRoot = ConfigManager.GetValue<string>("RuntimeRoot");
+                OSPlatform platform = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? OSPlatform.Windows
+                    : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                        ? OSPlatform.OSX
+                        : OSPlatform.Linux;
+
+                return ResolveRuntimeRoot(
+                    _overriddenRuntimeRoot,
+                    configRuntimeRoot,
                     platform,
                     Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
             }
@@ -112,24 +134,54 @@ namespace gov.llnl.wintap.core.shared
                 return configuredDataRoot;
             }
 
+            return ResolvePlatformDefault("data", platform, commonApplicationData);
+        }
+
+        internal static string ResolveRuntimeRoot(
+            string overriddenRuntimeRoot,
+            string configuredRuntimeRoot,
+            OSPlatform platform,
+            string commonApplicationData)
+        {
+            if (!string.IsNullOrWhiteSpace(overriddenRuntimeRoot))
+            {
+                return overriddenRuntimeRoot;
+            }
+
+            if (!string.IsNullOrWhiteSpace(configuredRuntimeRoot))
+            {
+                return configuredRuntimeRoot;
+            }
+
+            return ResolvePlatformDefault("runtime", platform, commonApplicationData);
+        }
+
+        private static string ResolvePlatformDefault(string leaf, OSPlatform platform, string commonApplicationData)
+        {
             if (platform.Equals(OSPlatform.Windows))
             {
-                return Path.Combine(commonApplicationData, "Wintap");
+                return commonApplicationData.TrimEnd('\\', '/') + @"\Wintap\" + leaf;
             }
 
             if (platform.Equals(OSPlatform.OSX))
             {
-                return "/Library/Application Support/Mactap";
+                return Path.Combine("/Library/Application Support/Mactap", leaf);
             }
 
-            return "/var/lib/lintap";
+            return Path.Combine("/var/lib/lintap", leaf);
         }
 
         private static string _overriddenDataRoot = null;
+        private static string _overriddenRuntimeRoot = null;
 
         internal static void SetDataRoot(string path)
         {
             _overriddenDataRoot = path;
+        }
+
+        internal static void SetRuntimeRoot(string path)
+        {
+            _overriddenRuntimeRoot = path;
         }
 
         static internal string AppName
