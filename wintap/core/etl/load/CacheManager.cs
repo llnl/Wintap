@@ -42,12 +42,12 @@ namespace gov.llnl.wintap.core.etl.load
             LogStartupConfiguration();
             svcRunning = true;
             SendQueue = new ConcurrentQueue<dynamic>();
-            DirectoryInfo parquetDir = new DirectoryInfo(Paths.ParquetDataPath);
-            if (!parquetDir.Exists)
+            DirectoryInfo stagingDir = new DirectoryInfo(Paths.EsperStagingPath);
+            if (!stagingDir.Exists)
             {
-                parquetDir.Create();
+                stagingDir.Create();
             }
-            cacheDir = new DirectoryInfo(Paths.ParquetDataPath);
+            cacheDir = stagingDir;
             bytesOnDisk = getCurrentCacheDirSize();
 
             WintapLogger.Log.Append("Loading data uploaders...", LogLevel.Info);
@@ -97,6 +97,7 @@ namespace gov.llnl.wintap.core.etl.load
                 Utilities.LogStartupConfigurationMessage("Data and runtime roots are the same; host-specific state will share the data tree.", LogLevel.Warn);
             }
             Utilities.LogStartupConfigurationMessage("Parquet data path: " + Paths.ParquetDataPath, LogLevel.Info);
+            Utilities.LogStartupConfigurationMessage("Esper staging path: " + Paths.EsperStagingPath, LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("Serialization interval (sec): " + etlConfig.SerializationIntervalSec, LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("Upload interval (sec): " + etlConfig.UploadIntervalSec, LogLevel.Info);
             Utilities.LogStartupConfigurationMessage("Write to parquet: " + etlConfig.WriteToParquet, LogLevel.Info);
@@ -342,7 +343,7 @@ namespace gov.llnl.wintap.core.etl.load
 
         private void upload(List<RawSensorCacheFile> rawSensorFiles)
         {
-            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor"));
+            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor"));
             WintapLogger.Log.Append("CacheManager upload method is starting. raw_sensor directory: " + rawSensorDir.FullName, LogLevel.Info);
 
             if (!rawSensorDir.Exists)
@@ -518,7 +519,7 @@ namespace gov.llnl.wintap.core.etl.load
                 hungHelper.Kill();
                 WintapLogger.Log.Append("MergeHelper killed, clearing unmerged parquet only", LogLevel.Info);
 
-                DirectoryInfo parquetDir = new DirectoryInfo(Paths.ParquetDataPath);
+                DirectoryInfo parquetDir = new DirectoryInfo(Paths.EsperStagingPath);
                 long totalParquetRemoved = 0;
                 foreach (DirectoryInfo directory in parquetDir.GetDirectories())
                 {
@@ -578,7 +579,7 @@ namespace gov.llnl.wintap.core.etl.load
 
         private void clearRawSensor()
         {
-            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor"));
+            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor"));
             if (!rawSensorDir.Exists)
             {
                 rawSensorDir.Create();
@@ -641,7 +642,7 @@ namespace gov.llnl.wintap.core.etl.load
             FileInfo file = new FileInfo(path);
             DirectoryInfo parentDirectory = file.Directory;
             file.Delete();
-            cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor")));
+            cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor")));
             return RawSensorCacheDeleteOutcome.Deleted;
         }
 
@@ -691,7 +692,7 @@ namespace gov.llnl.wintap.core.etl.load
                 DirectoryInfo parentDirectory = fi.Directory;
                 fi.Delete();
                 WintapLogger.Log.Append($"Deleted file after {reason}: {fileName} ({fileLength} bytes)", LogLevel.Info);
-                cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor")));
+                cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor")));
                 return true;
             }
             catch (Exception ex)
@@ -728,7 +729,7 @@ namespace gov.llnl.wintap.core.etl.load
 
         private List<RawSensorCacheFile> getRawSensorParquetFiles()
         {
-            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor"));
+            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor"));
             return RawSensorCachePruner.EnumerateFinalizedFiles(rawSensorDir.FullName).ToList();
         }
 
@@ -753,7 +754,7 @@ namespace gov.llnl.wintap.core.etl.load
 
         private long getCurrentCacheDirSize()
         {
-            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(cacheDir.FullName, "raw_sensor"));
+            DirectoryInfo rawSensorDir = new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor"));
             if (!rawSensorDir.Exists)
             {
                 return 0;

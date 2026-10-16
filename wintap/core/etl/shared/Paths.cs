@@ -20,6 +20,7 @@ namespace gov.llnl.wintap.core.etl.shared
         internal static readonly string DataRoot = Env.FileDataRoot;
         internal static readonly string RuntimeRoot = Env.FileRuntimeRoot;
         internal static readonly string ParquetDataPath = DataRoot;
+        internal static readonly string EsperStagingPath = Path.Combine(RuntimeRoot, "esper_staging");
         internal static readonly string LogDataPath = Path.Combine(RuntimeRoot, "Logs");
         internal static readonly string EventStorePath = Path.Combine(RuntimeRoot, "event_store");
         internal static readonly string CsvDataPath = Path.Combine(RuntimeRoot, "csv");

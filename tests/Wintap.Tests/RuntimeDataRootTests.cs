@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using gov.llnl.wintap.core.shared;
 using gov.llnl.wintap.core.etl.load.adapters.baseclass;
+using gov.llnl.wintap.core.etl.shared;
 using Xunit;
 
 namespace Wintap.Tests
@@ -152,6 +153,14 @@ namespace Wintap.Tests
             string result = Uploader.GetParquetRelativePathForFile(localFile, dataRoot);
 
             Assert.Equal(Path.Combine("raw_sensor", "process", "dayPK=20261015", "hourPK=12", "host+process+timestamp.parquet"), result);
+        }
+
+        [Fact]
+        [Trait("Category", "rdp-02")]
+        public void EsperSerializerStaging_IsUnderRuntimeRoot()
+        {
+            Assert.Equal(Path.Combine(Env.FileRuntimeRoot, "esper_staging"), Paths.EsperStagingPath);
+            Assert.NotEqual(Path.Combine(Env.FileDataRoot, "esper_staging"), Paths.EsperStagingPath);
         }
 
         [Fact]
