@@ -82,7 +82,7 @@ namespace gov.llnl.wintap.core.infrastructure.health
                     isSentinel = !string.IsNullOrEmpty(sentinel) && string.Equals(msg?.PidHash, sentinel, StringComparison.Ordinal);
                 }
                 catch { }
-                return Header(msg) + " ProcessName=" + (msg?.ProcessName ?? "<null>") + " PidHashIsUnknownSentinel=" + isSentinel.ToString().ToLowerInvariant();
+                return Header(msg) + " ProcessName=" + (msg?.ProcessName ?? "<null>") + " PidHashIsUnknownSentinel=" + isSentinel.ToString().ToLowerInvariant() + " ReceiveTime=" + msg?.ReceiveTime + " InspectionTimeUtc=" + DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
 

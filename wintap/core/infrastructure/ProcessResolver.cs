@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Lawrence Livermore National Security, LLC.
  * Produced at the Lawrence Livermore National Laboratory.
  * All rights reserved.
@@ -47,6 +47,9 @@ namespace gov.llnl.wintap.core.infrastructure
         private readonly bool _telemetryDetailEnabled;
         private readonly int _historicalIdentityCacheCapacity;
         private readonly bool _maintenanceLoggingEnabled;
+        private readonly Action<string, LogLevel> _registrationLogSink;
+        private readonly Func<DateTime> _maintenanceClock = () => DateTime.UtcNow;
+        private readonly Action<DateTime> _reconciliationStep;
         private DateTime _nextMaintenanceUtc = DateTime.MinValue;
 
         private const string ProcessRetentionTelemetryTable = "process_retention_telemetry";
@@ -120,7 +123,8 @@ namespace gov.llnl.wintap.core.infrastructure
             sessionId = StateManager.SessionId.ToString();
             _maintenanceLoggingEnabled = true;
             _retentionEnabled = GetConfiguredBool("WINTAP_PROCESS_RETENTION_ENABLED", true);
-            _reconcileStaleOpenEnabled = GetConfiguredBool("WINTAP_PROCESS_RECONCILE_STALE_OPEN_ENABLED", true);
+            _reconcileStaleOpenEnabled = IsContinuousReconciliationEnabled(
+                OperatingSystem.IsWindows(), GetConfiguredBool("WINTAP_PROCESS_RECONCILE_STALE_OPEN_ENABLED", true));
             _sweepInterval = GetConfiguredTimeSpanSeconds("WINTAP_PROCESS_SWEEP_INTERVAL_SEC", TimeSpan.FromMinutes(5));
             _exitRetention = GetConfiguredTimeSpanSeconds("WINTAP_PROCESS_EXIT_RETENTION_SEC", TimeSpan.FromHours(1));
             _reconcileMinAge = GetConfiguredTimeSpanSeconds("WINTAP_PROCESS_RECONCILE_MIN_AGE_SEC", TimeSpan.FromMinutes(1));
@@ -148,15 +152,24 @@ namespace gov.llnl.wintap.core.infrastructure
         internal ProcessResolver(
             DuckDBConnection testConnection,
             int historicalIdentityCacheCapacity,
-            bool enableMaintenance = false)
+            bool enableMaintenance = false,
+            Action<string, LogLevel> registrationLogSink = null,
+            bool requestedReconciliation = false,
+            bool? isWindows = null,
+            Func<DateTime> maintenanceClock = null,
+            Action<DateTime> reconciliationStep = null)
         {
             processHash = new ProcessHash();
+            _registrationLogSink = registrationLogSink;
             agentId = "test";
             sessionId = "test";
             _maintenanceLoggingEnabled = false;
             connection = testConnection ?? throw new ArgumentNullException(nameof(testConnection));
             _retentionEnabled = true;
-            _reconcileStaleOpenEnabled = false;
+            _reconcileStaleOpenEnabled = IsContinuousReconciliationEnabled(
+                isWindows ?? OperatingSystem.IsWindows(), requestedReconciliation);
+            _maintenanceClock = maintenanceClock ?? (() => DateTime.UtcNow);
+            _reconciliationStep = reconciliationStep;
             _sweepInterval = TimeSpan.FromMinutes(5);
             _exitRetention = TimeSpan.FromHours(1);
             _reconcileMinAge = TimeSpan.FromMinutes(1);
@@ -168,18 +181,54 @@ namespace gov.llnl.wintap.core.infrastructure
             _nextMaintenanceUtc = enableMaintenance ? DateTime.MinValue : DateTime.MaxValue;
         }
 
-        /// <summary>
-        /// Resolve process information at a specific time
-        /// </summary>
+        internal static bool IsContinuousReconciliationEnabled(bool isWindows, bool configuredReconcileEnabled)
+            => !isWindows && configuredReconcileEnabled;
+
+        internal sealed record AttributedProcessPath(string Path, string Status);
+
+        // Stored metadata for an already-attributed identity, without maintenance or OS fallback.
+        internal AttributedProcessPath ReadAttributedProcessPath(string pidHash, int pid)
+        {
+            if (string.IsNullOrWhiteSpace(pidHash) ||
+                string.Equals(pidHash, "Unknown", StringComparison.OrdinalIgnoreCase) ||
+                pidHash == processHash.GenKeyForProcess("llnl", Environment.MachineName,
+                    Guid.TryParse(agentId, out Guid storedAgentId) ? storedAgentId : Guid.Empty, -1, 0, "Process"))
+                return new AttributedProcessPath(null, "missing_identity");
+            if (!System.Threading.Monitor.TryEnter(_dbLock, 20))
+                return new AttributedProcessPath(null, "resolver_busy");
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT image_path FROM process WHERE pid_hash=$hash AND process_id=$pid LIMIT 1";
+                command.Parameters.Add(new DuckDBParameter("hash", pidHash));
+                command.Parameters.Add(new DuckDBParameter("pid", pid));
+                using var reader = command.ExecuteReader();
+                if (!reader.Read()) return new AttributedProcessPath(null, "identity_not_found");
+                string path = reader.IsDBNull(0) ? null : reader.GetString(0);
+                if (string.IsNullOrWhiteSpace(path)) return new AttributedProcessPath(null, "path_missing");
+                bool full = (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':' &&
+                    (path[2] == '\\' || path[2] == '/')) ||
+                    path.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith(@"\??\", StringComparison.Ordinal) ||
+                    (path.StartsWith(@"\\", StringComparison.Ordinal) &&
+                        path.Substring(2).Split('\\', StringSplitOptions.RemoveEmptyEntries).Length >= 2);
+                return full ? new AttributedProcessPath(path, "stored_identity") :
+                    new AttributedProcessPath(null, "path_not_full");
+            }
+            catch { return new AttributedProcessPath(null, "lookup_failed"); }
+            finally { System.Threading.Monitor.Exit(_dbLock); }
+        }
+
+        /// <summary>Resolve process information at a specific time.</summary>
         public ProcessRecord ResolveProcessAtTime(int pid, DateTime eventTime)
         {
             lock (_dbLock)
             {
-                MaybeRunMaintenanceLocked(DateTime.UtcNow);
+                MaybeRunMaintenanceLocked(_maintenanceClock());
                 string query = null;
                 try
                 {
-                    query = BuildResolveProcessAtTimeQuery(pid, eventTime);
+                    query = BuildResolveProcessAtTimeQuery();
 
                     using var command = connection.CreateCommand();
                     command.CommandText = query;
@@ -246,17 +295,16 @@ namespace gov.llnl.wintap.core.infrastructure
             }          
         }
 
-        internal static string BuildResolveProcessAtTimeQuery(int pid, DateTime eventTime)
+        internal static string BuildResolveProcessAtTimeQuery()
         {
-            string eventTimeStr = eventTime.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-            return $@"
+            return @"
                 SELECT pid_hash, parent_pid_hash, process_id, parent_process_id,
                 process_name, image_path, command_line, create_time,
                 exit_time, exit_code, source, user_name, md5_hash, sha2_hash
                 FROM process
-                WHERE process_id = {pid}
-                AND create_time <= '{eventTimeStr}'
-                AND (exit_time IS NULL OR exit_time >= '{eventTimeStr}')
+                WHERE process_id = $process_id
+                AND create_time <= $event_time
+                AND (exit_time IS NULL OR exit_time >= $event_time)
                 ORDER BY create_time DESC
                 LIMIT 1";
         }
@@ -287,6 +335,40 @@ namespace gov.llnl.wintap.core.infrastructure
             return resolved;
         }
 
+        // BAM can write in the exiting process context just after the kernel ProcessStop.
+        // This is not a change to the process lifetime or the strict identity cache.
+        internal static readonly TimeSpan RegistryTeardownGrace = TimeSpan.FromMilliseconds(1);
+
+        public ProcessRecord ResolveRegistryTeardownProcess(int pid, DateTime eventTime)
+        {
+            DateTime utc = eventTime.ToUniversalTime();
+            lock (_dbLock)
+            {
+                using var command = connection.CreateCommand();
+                // Select the latest *start*, not the nearest exit: an intervening reused PID
+                // must prevent attribution to an older instance, even if it has also exited.
+                command.CommandText = @"
+                    SELECT pid_hash, process_name, create_time, exit_time
+                    FROM process WHERE process_id = $pid AND create_time <= $event_time
+                    ORDER BY create_time DESC LIMIT 2";
+                command.Parameters.Add(new DuckDBParameter("pid", pid));
+                command.Parameters.Add(new DuckDBParameter("event_time", utc));
+                using var reader = command.ExecuteReader();
+                if (!reader.Read() || reader.IsDBNull(0) || reader.IsDBNull(1) || reader.IsDBNull(3)) return null;
+                var owner = new ProcessRecord {
+                    ProcessId = pid, PidHash = reader.GetString(0), ProcessName = reader.GetString(1),
+                    CreateTime = ReadUtcDateTime(reader, 2), ExitTime = ReadUtcDateTime(reader, 3)
+                };
+                TimeSpan afterExit = utc - owner.ExitTime.Value;
+                if (afterExit <= TimeSpan.Zero || afterExit > RegistryTeardownGrace ||
+                    owner.ExitTime < owner.CreateTime || string.IsNullOrWhiteSpace(owner.PidHash) ||
+                    string.IsNullOrWhiteSpace(owner.ProcessName) || owner.ProcessName == UnknownProcessName) return null;
+                // Conflicting identities with the same creation time are not distinguishable.
+                if (reader.Read() && ReadUtcDateTime(reader, 2) == owner.CreateTime) return null;
+                RecordTelemetryEvent("registry_teardown_resolved", owner.ProcessName, owner.PidHash);
+                return owner;
+            }
+        }
         public void TakeHistoricalIdentityCacheCounters(out long hits, out long misses, out long evictions, out int entries)
         {
             _historicalIdentityCache.TakeCounters(out hits, out misses, out evictions, out entries);
@@ -325,7 +407,7 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             lock (_dbLock)
             {
-                MaybeRunMaintenanceLocked(DateTime.UtcNow);
+                MaybeRunMaintenanceLocked(_maintenanceClock());
                 var query = $@"
                     SELECT COUNT(*) 
                     FROM process 
@@ -471,7 +553,7 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             if (message.Process == null)
             {
-                WintapLogger.Log.Append($"Cannot register process: WintapMessage does not contain a Process event", LogLevel.Warn);
+                LogRegistrationOrClear($"Cannot register process: WintapMessage does not contain a Process event", LogLevel.Warn);
                 return;
             }
 
@@ -482,7 +564,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
             lock (_dbLock)
             {
-                MaybeRunMaintenanceLocked(DateTime.UtcNow);
+                MaybeRunMaintenanceLocked(_maintenanceClock());
                 string rawPidHash = message.PidHash ?? string.Empty;
                 string pidHash = EscapeSql(rawPidHash);
 
@@ -496,7 +578,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     {
                         AddPendingExit(message.PID, exitTime, exitCode, proc.ParentPidHash, proc.ParentPID, proc.Name);
                         RemoveActiveProcessCacheEntry(message.PID, rawPidHash);
-                        WintapLogger.Log.Append(
+                        LogRegistrationOrClear(
                             $"Queued unmatched Stop for PID {message.PID} {proc.Name}; no existing process row for PidHash {pidHash}",
                             LogLevel.Debug);
                         return;
@@ -531,7 +613,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     }
                     catch (Exception ex)
                     {
-                        WintapLogger.Log.Append(
+                        LogRegistrationOrClear(
                             $"DuckDB updating exit for PID {message.PID} {proc.Name}: {ex.Message}",
                             LogLevel.Error);
                         return;
@@ -545,13 +627,13 @@ namespace gov.llnl.wintap.core.infrastructure
                     SetActiveProcessCacheEntry(message.PID, rawPidHash, proc.Name, createTime);
                     ApplyPendingExit(message.PID, rawPidHash, createTime);
 
-                    WintapLogger.Log.Append(
+                    LogRegistrationOrClear(
                         $"Registered process PID {message.PID}: {proc.Name} with process resolver",
                         LogLevel.Debug);
                 }
                 catch (Exception ex)
                 {
-                    WintapLogger.Log.Append(
+                    LogRegistrationOrClear(
                         $"DuckDB registering PID {message.PID} {proc.Name}: {ex.Message}",
                         LogLevel.Error);
                 }
@@ -985,6 +1067,22 @@ namespace gov.llnl.wintap.core.infrastructure
             using var cmd = new DuckDBCommand(sql, connection);
             cmd.ExecuteNonQuery();
         }
+        internal static string ResolveStoredPidHashAtTime(DuckDBConnection connection, int pid, DateTime eventTime)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT pid_hash
+                FROM process
+                WHERE process_id = $process_id
+                  AND create_time <= $event_time
+                  AND (exit_time IS NULL OR exit_time >= $event_time)
+                ORDER BY create_time DESC
+                LIMIT 1";
+            command.Parameters.Add(new DuckDBParameter("process_id", pid));
+            command.Parameters.Add(new DuckDBParameter("event_time", eventTime.ToUniversalTime()));
+            return command.ExecuteScalar()?.ToString();
+        }
+
         /// <summary>
         /// Get the most recent PidHash for a process with the given PID 
         /// that was created at or before the specified time
@@ -998,20 +1096,9 @@ namespace gov.llnl.wintap.core.infrastructure
             {
                 lock (_dbLock)
                 {
-                    MaybeRunMaintenanceLocked(DateTime.UtcNow);
+                    MaybeRunMaintenanceLocked(_maintenanceClock());
 
-                    var query = $@"
-                        SELECT pid_hash
-                        FROM process
-                        WHERE process_id = {pid}
-                          AND create_time <=  TIMESTAMP '{createTime:yyyy-MM-dd HH:mm:ss.fff}'
-                          AND (exit_time IS NULL OR exit_time >= TIMESTAMP '{createTime:yyyy-MM-dd HH:mm:ss.fff}')
-                        ORDER BY create_time DESC
-                        LIMIT 1";
-
-                    using var command = connection.CreateCommand();
-                    command.CommandText = query;
-                    var result = command.ExecuteScalar();
+                    var result = ResolveStoredPidHashAtTime(connection, pid, createTime);
 
                     if (result == null)
                     {
@@ -1202,7 +1289,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
             lock (_dbLock)
             {
-                MaybeRunMaintenanceLocked(DateTime.UtcNow);
+                MaybeRunMaintenanceLocked(_maintenanceClock());
                 using var command = connection.CreateCommand();
                 command.CommandText = query;
 
@@ -1245,7 +1332,7 @@ namespace gov.llnl.wintap.core.infrastructure
         /// <returns>Number of records deleted</returns>
         public void ClearDB()
         {
-            WintapLogger.Log.Append("Starting ClearDB...", LogLevel.Info);
+            LogRegistrationOrClear("Starting ClearDB...", LogLevel.Info);
             lock (_dbLock)
             {
                 long recordCount = ClearProcessRows(connection);
@@ -1253,10 +1340,18 @@ namespace gov.llnl.wintap.core.infrastructure
                 _nextMaintenanceUtc = DateTime.MinValue;
                 _historicalIdentityCache.Clear();
 
-                WintapLogger.Log.Append($"Cleared {recordCount} process records from event store", LogLevel.Info);
+                LogRegistrationOrClear($"Cleared {recordCount} process records from event store", LogLevel.Info);
             }
         }
 
+        // Instance-only test seam; production retains the original logger and messages.
+        private void LogRegistrationOrClear(string message, LogLevel level)
+        {
+            if (_registrationLogSink != null)
+                _registrationLogSink(message, level);
+            else
+                WintapLogger.Log.Append(message, level);
+        }
         private void MaybeRunMaintenanceLocked(DateTime nowUtc)
         {
             if (!_retentionEnabled || nowUtc < _nextMaintenanceUtc)
@@ -1269,7 +1364,10 @@ namespace gov.llnl.wintap.core.infrastructure
             {
                 if (_reconcileStaleOpenEnabled)
                 {
-                    ReconcileStaleOpenRowsLocked(nowUtc);
+                    if (_reconciliationStep != null)
+                        _reconciliationStep(nowUtc);
+                    else
+                        ReconcileStaleOpenRowsLocked(nowUtc);
                 }
 
                 DeleteExpiredExitedRowsLocked(nowUtc);

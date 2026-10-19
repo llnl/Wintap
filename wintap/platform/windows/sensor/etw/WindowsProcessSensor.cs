@@ -501,7 +501,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                     catch (Exception ex)
                     {
                         log(
-                            $"Windows process startup reconcile failed; stale open rows will be closed by the maintenance sweep: {ex.Message}",
+                            $"Windows process startup reconcile failed; continuing with unreconciled history: {ex.Message}",
                             LogLevel.Warn);
                     }
                 }

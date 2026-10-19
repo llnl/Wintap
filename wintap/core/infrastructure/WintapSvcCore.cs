@@ -1,4 +1,4 @@
-﻿using DuckDB.NET.Data;
+using DuckDB.NET.Data;
 using gov.llnl.wintap.core.api;
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.infrastructure.health;
@@ -41,6 +41,11 @@ namespace gov.llnl.wintap
         private readonly ILogger<WinTapSvc> _logger;
         private PluginManager pluginMgr;
         private SubscriptionManager subscriptionMgr;
+#if WINDOWS
+        private readonly object fileValidationLock = new object();
+        private bool fileValidationStopping;
+        private platform.windows.infrastructure.FileAttributionValidation fileValidation;
+#endif
 
         // ─── Static Initialization ─────────────────────────────────────────────
         static WinTapSvc()
@@ -113,6 +118,16 @@ namespace gov.llnl.wintap
         /// </summary>
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
+#if WINDOWS
+            platform.windows.infrastructure.FileAttributionValidation validation;
+            lock (fileValidationLock)
+            {
+                fileValidationStopping = true;
+                validation = fileValidation;
+                validation?.Cancel();
+            }
+            if (validation != null) await validation.JoinAsync();
+#endif
             WintapLogger.Log.Append("Stop command received. Attempting to shutdown plugins",
                 LogLevel.Info);
 
@@ -120,6 +135,7 @@ namespace gov.llnl.wintap
             {
                 // Stop health monitoring first: suppresses liveness stall alarms while
                 // components shut down and flushes the final window while the log is open.
+                EventChannel.FlushPendingAttributionEvents();
                 SensorHealthMonitor.Default.Stop();
 
                 // Record shutdown metadata in registry
@@ -289,6 +305,24 @@ namespace gov.llnl.wintap
                         LogLevel.Error);
                 }
 
+#if WINDOWS
+                if (platform.windows.infrastructure.FileAttributionValidation.Enabled(
+                    ConfigManager.GetValue<string>(platform.windows.infrastructure.FileAttributionValidation.Flag)))
+                {
+                    lock (fileValidationLock)
+                    {
+                        if (!fileValidationStopping && fileValidation == null)
+                        {
+                            fileValidation = new platform.windows.infrastructure.FileAttributionValidation(
+                                processResolver is ProcessResolver concrete ? concrete.ReadAttributedProcessPath : null);
+                            fileValidation.Start(platform.windows.infrastructure.FileAttributionValidation.Unavailable(
+                                RuntimeInformation.IsOSPlatform(OSPlatform.Windows), processResolver != null,
+                                subscriptionMgr?.HasStartedProcessAndFileCollectors == true,
+                                key => ConfigManager.GetValue<string>(key)));
+                        }
+                    }
+                }
+#endif
                 WintapLogger.Log.Append("Startup complete.", LogLevel.Info);
             }
             catch (Exception ex)

@@ -75,8 +75,11 @@ namespace gov.llnl.wintap.core.etl.extract
         private System.Timers.Timer flushToDiskTimer;
         private int flushInProgress;
         private long skippedOverlappingFlushes;
-        private int fileFlushHighWaterEvents;
+        private int flushHighWaterEvents;
         private int highWaterFlushRequested;
+        private long acceptedEvents;
+        private long peakQueueDepth;
+        private SerializerFlushWorker flushWorker;
 
         protected Serializer(string[] queries)
         {
@@ -205,6 +208,14 @@ namespace gov.llnl.wintap.core.etl.extract
 
                 this.sensorData.Enqueue(obj);
                 long queueDepth = Interlocked.Increment(ref sensorDataDepth);
+                Interlocked.Increment(ref acceptedEvents);
+                long peak = Interlocked.Read(ref peakQueueDepth);
+                while (queueDepth > peak)
+                {
+                    long observed = Interlocked.CompareExchange(ref peakQueueDepth, queueDepth, peak);
+                    if (observed == peak) break;
+                    peak = observed;
+                }
                 RequestHighWaterFlush(queueDepth);
             }
             else
@@ -267,6 +278,7 @@ namespace gov.llnl.wintap.core.etl.extract
         {
             IsEnabled = false;
             this.SensorName = this.GetType().Name.ToLower();
+            ETLConfig etlConfig = Utilities.GetETLConfig();
 
             parquetWriter = new ParquetWriter();
             sensorData = new ConcurrentQueue<ExpandoObject>();
@@ -283,10 +295,10 @@ namespace gov.llnl.wintap.core.etl.extract
             }
 
             string perSensorName = $"WINTAP_ETL_MAX_QUEUE_EVENTS_{this.GetType().Name.ToUpperInvariant()}";
-            if (int.TryParse(gov.llnl.wintap.core.shared.ConfigManager.GetValue<string>(perSensorName), out int perMax) && perMax > 0)
-            {
-                maxInMemoryEvents = perMax;
-            }
+            int? capacityOverride = int.TryParse(gov.llnl.wintap.core.shared.ConfigManager.GetValue<string>(perSensorName), out int perMax) && perMax > 0
+                ? perMax : null;
+            var schedule = SerializerSchedule.ResolveOptions(etlConfig, SensorName, maxInMemoryEvents, capacityOverride);
+            maxInMemoryEvents = schedule.MaxQueueEvents.Value;
 
             // Backlog drop policy (default drop newest).
             // Global: WINTAP_ETL_QUEUE_DROP_POLICY ("newest"|"oldest")
@@ -297,22 +309,29 @@ namespace gov.llnl.wintap.core.etl.extract
                 ? DropPolicy.DropOldest
                 : backlogDropPolicy;
 
-            ETLConfig etlConfig = Utilities.GetETLConfig();
-            int flushIntervalSeconds = SerializerSchedule.ResolveIntervalSeconds(
-                SensorName,
-                etlConfig.SerializationIntervalSec,
-                etlConfig.FileSerializationIntervalSec ?? 5);
-            fileFlushHighWaterEvents = etlConfig.FileSerializationHighWaterEvents ?? 5000;
-            flushToDiskTimer = new System.Timers.Timer();
-            flushToDiskTimer.Interval = flushIntervalSeconds * 1000;
-            flushToDiskTimer.AutoReset = true;
-            flushToDiskTimer.Elapsed += FlushToDiskTimer_Elapsed;
-            flushToDiskTimer.Start();
+            int flushIntervalSeconds = schedule.IntervalSec.Value;
+            flushHighWaterEvents = schedule.HighWaterEvents.Value;
+            if (schedule.UseDedicatedWorker == true)
+            {
+                flushWorker = new SerializerFlushWorker(
+                    TimeSpan.FromSeconds(flushIntervalSeconds),
+                    () => SerializerSchedule.ShouldRequestHighWaterFlush(SensorName, Interlocked.Read(ref sensorDataDepth), flushHighWaterEvents, configured: true),
+                    trigger => FlushToDisk(trigger),
+                    ex => WintapLogger.Log.Append($"{SensorName}: drain worker failed: {ex}", LogLevel.Error), SensorName);
+            }
+            else
+            {
+                flushToDiskTimer = new System.Timers.Timer();
+                flushToDiskTimer.Interval = flushIntervalSeconds * 1000;
+                flushToDiskTimer.AutoReset = true;
+                flushToDiskTimer.Elapsed += FlushToDiskTimer_Elapsed;
+                flushToDiskTimer.Start();
+            }
 
             WintapLogger.Log.Append($"{SensorName}: serializer flush interval={flushIntervalSeconds}s", LogLevel.Info);
-            if (fileFlushHighWaterEvents > 0 && SensorName == "fileserializer")
+            if (SerializerSchedule.ShouldRequestHighWaterFlush(SensorName, flushHighWaterEvents, flushHighWaterEvents, configured: true))
             {
-                WintapLogger.Log.Append($"{SensorName}: serializer high-water flush threshold={fileFlushHighWaterEvents}", LogLevel.Info);
+                WintapLogger.Log.Append($"{SensorName}: serializer high-water flush threshold={flushHighWaterEvents},queue_capacity={maxInMemoryEvents}", LogLevel.Info);
             }
 
             regContext();
@@ -329,7 +348,13 @@ namespace gov.llnl.wintap.core.etl.extract
 
         private void RequestHighWaterFlush(long queueDepth)
         {
-            if (!SerializerSchedule.ShouldRequestHighWaterFlush(SensorName, queueDepth, fileFlushHighWaterEvents) ||
+            if (flushWorker != null)
+            {
+                if (SerializerSchedule.ShouldRequestHighWaterFlush(SensorName, queueDepth, flushHighWaterEvents, configured: true))
+                    flushWorker.Request();
+                return;
+            }
+            if (!SerializerSchedule.ShouldRequestHighWaterFlush(SensorName, queueDepth, flushHighWaterEvents, configured: true) ||
                 Interlocked.CompareExchange(ref highWaterFlushRequested, 1, 0) != 0)
             {
                 return;
@@ -340,7 +365,7 @@ namespace gov.llnl.wintap.core.etl.extract
             {
                 try
                 {
-                    while (Interlocked.Read(ref sensorDataDepth) >= fileFlushHighWaterEvents)
+                    while (Interlocked.Read(ref sensorDataDepth) >= flushHighWaterEvents)
                     {
                         if (FlushToDisk("high_water"))
                         {
@@ -428,7 +453,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 if (drained > 0 || skipped > 0)
                 {
                     WintapLogger.Log.Append(
-                        $"{this.SensorName}: serializer_flush trigger={trigger},drained={drained},remaining={Interlocked.Read(ref sensorDataDepth)},elapsed_ms={elapsedMs},skipped_overlap={skipped},parquet_backlog={parquetWriter.Backlog}",
+                        $"{this.SensorName}: serializer_flush trigger={trigger},drained={drained},remaining={Interlocked.Read(ref sensorDataDepth)},elapsed_ms={elapsedMs},skipped_overlap={skipped},parquet_backlog={parquetWriter.Backlog},accepted_total={Interlocked.Read(ref acceptedEvents)},dropped_total={Interlocked.Read(ref droppedDueToBacklog)},peak_depth={Interlocked.Read(ref peakQueueDepth)}",
                         LogLevel.Info);
                 }
                 Interlocked.Exchange(ref flushInProgress, 0);

@@ -20,6 +20,8 @@ namespace gov.llnl.wintap.core.etl.extract
     internal class FileSerializer : Serializer
     {
 
+        internal static string SelectPath(string path, bool windows) => windows ? path : path.ToLower();
+
         internal FileSerializer(string query) : base(query)
         {
 
@@ -51,7 +53,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 flatMsg.PidHash = pidHash;
                 flatMsg.PID = Int32.Parse(sensorEvent["PID"].ToString());
                 flatMsg.Hostname = Environment.MachineName.ToLower();
-                flatMsg.File_Path = sensorEvent["path"].ToString().ToLower();
+                flatMsg.File_Path = SelectPath(sensorEvent["path"].ToString(), System.OperatingSystem.IsWindows());
                 flatMsg.File_Hash = idGen.GenKeyForFile(transform.Transformer.context, HostSerializer.Instance.HostId.Hostname, flatMsg.AgentId, flatMsg.File_Path);
                 flatMsg.MessageType = "PROCESS_FILE";
                 flatMsg.EventTime = GetUnixNowTime();
