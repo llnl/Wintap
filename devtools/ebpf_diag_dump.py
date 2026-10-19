@@ -2,7 +2,7 @@
 """
 Simple diagnostic CLI that tails the Lintap log and prints BPF diag events live.
 
-This is a pragmatic userland tool that watches `/var/lib/lintap/Logs/Lintap.log`
+This is a pragmatic userland tool that watches `/var/log/lintap/runtime/Logs/Lintap.log`
 and prints lines that look like the in-band diag events emitted by the tracer.
 
 Usage: python3 devtools/ebpf_diag_dump.py
@@ -12,7 +12,7 @@ import os
 import sys
 
 
-LOG_PATH = os.environ.get("WINTAP_LOG_PATH", "/var/lib/lintap/Logs/Lintap.log")
+LOG_PATH = os.environ.get("WINTAP_LOG_PATH", "/var/log/lintap/runtime/Logs/Lintap.log")
 
 
 def follow(path):

@@ -12,7 +12,7 @@ Notes/limitations:
   sensitivity to direction/modeling differences.
 
 Typical usage (Lintap already running and writing parquet):
-  sudo python3 devtools/network_tcpdump_validation.py --data-root /var/lib/lintap
+  sudo python3 devtools/network_tcpdump_validation.py --data-root /var/log/lintap/data
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def default_data_root() -> Path:
     env_root = os.environ.get("WINTAP_DATA_ROOT")
     if env_root:
         return Path(env_root)
-    return Path("/var/lib/lintap")
+    return Path("/var/log/lintap/data")
 
 
 def check_root() -> None:
@@ -300,7 +300,7 @@ def duckdb_json(sql: str) -> list[dict]:
 
 
 def collect_lintap_metrics(data_root: Path, start_epoch: float, end_epoch: float) -> dict[FlowKey, Metrics]:
-    parquet_root = data_root / "parquet"
+    parquet_root = data_root / "raw_sensor"
     tcp_glob = str((parquet_root / "tcpconnection" / "*.parquet").as_posix())
     udp_glob = str((parquet_root / "udppacket" / "*.parquet").as_posix())
     start_iso = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(start_epoch - 2))
@@ -398,7 +398,7 @@ def main() -> int:
     parser.add_argument(
         "--clean-data",
         action="store_true",
-        help="Delete existing data-root Logs/parquet/event_store/diag before running",
+        help="Delete existing raw_sensor and runtime Logs/event_store/diag before running",
     )
     args = parser.parse_args()
 
@@ -406,8 +406,14 @@ def main() -> int:
 
     lintap_proc: subprocess.Popen | None = None
     if args.clean_data:
-        for rel in ("Logs", "parquet", "event_store", "diag"):
-            p = args.data_root / rel
+        runtime_root = Path(os.environ.get("WINTAP_RUNTIME_ROOT", str(args.data_root.parent / "runtime")))
+        for p in (
+            args.data_root / "raw_sensor",
+            runtime_root / "Logs",
+            runtime_root / "event_store",
+            runtime_root / "diag",
+            runtime_root / "esper_staging",
+        ):
             try:
                 if p.exists():
                     for child in p.iterdir():

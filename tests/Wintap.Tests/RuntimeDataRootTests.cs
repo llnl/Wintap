@@ -83,7 +83,7 @@ namespace Wintap.Tests
         [Trait("Category", "wpc-09")]
         [InlineData("WINDOWS", @"C:\ProgramData\Wintap\data")]
         [InlineData("OSX", "/Library/Application Support/Mactap/data")]
-        [InlineData("LINUX", "/var/lib/lintap/data")]
+        [InlineData("LINUX", "/var/log/lintap/data")]
         public void ResolveDataRoot_UsesExpectedPlatformDefault(string platformName, string expected)
         {
             OSPlatform platform = platformName == "WINDOWS"
@@ -101,7 +101,7 @@ namespace Wintap.Tests
         [Trait("Category", "rdp-01")]
         [InlineData("WINDOWS", @"C:\ProgramData\Wintap\data")]
         [InlineData("OSX", "/Library/Application Support/Mactap/data")]
-        [InlineData("LINUX", "/var/lib/lintap/data")]
+        [InlineData("LINUX", "/var/log/lintap/data")]
         public void ResolveDataRoot_UsesSplitPlatformDefault(string platformName, string expected)
         {
             OSPlatform platform = platformName == "WINDOWS"
@@ -119,7 +119,7 @@ namespace Wintap.Tests
         [Trait("Category", "rdp-01")]
         [InlineData("WINDOWS", @"C:\ProgramData\Wintap\runtime")]
         [InlineData("OSX", "/Library/Application Support/Mactap/runtime")]
-        [InlineData("LINUX", "/var/lib/lintap/runtime")]
+        [InlineData("LINUX", "/var/log/lintap/runtime")]
         public void ResolveRuntimeRoot_UsesExpectedPlatformDefault(string platformName, string expected)
         {
             OSPlatform platform = platformName == "WINDOWS"

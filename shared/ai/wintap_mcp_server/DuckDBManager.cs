@@ -22,7 +22,7 @@ using System.Text;
 /// <list type="bullet">
 /// <item><description>Uses a singleton in-memory DuckDB connection for the application lifetime</description></item>
 /// <item><description>Automatically creates SQL views that reference Parquet files on disk</description></item>
-/// <item><description>Supports cross-platform paths (Windows: %ProgramData%, Unix: /var/lib)</description></item>
+/// <item><description>Supports cross-platform paths (Windows: %ProgramData%, Linux: /var/log/lintap)</description></item>
 /// <item><description>Provides cancellation support for long-running queries</description></item>
 /// </list>
 /// 
@@ -43,8 +43,8 @@ using System.Text;
 /// 
 /// <para><strong>Cross-Platform Paths:</strong></para>
 /// <list type="bullet">
-/// <item><description>Windows: <c>C:\ProgramData\wintap\parquet\merged\</c></description></item>
-/// <item><description>Unix: <c>/var/lib/wintap/parquet/merged/</c></description></item>
+/// <item><description>Windows: <c>C:\ProgramData\Wintap\data\raw_sensor\</c></description></item>
+/// <item><description>Unix: <c>/var/log/lintap/data/raw_sensor/</c></description></item>
 /// </list>
 /// 
 /// <para><strong>Usage Example:</strong></para>
@@ -89,21 +89,24 @@ public static class DuckDBManager
     private static void CreateOrReplaceProcessViews()
     {
 
-        string baseDir = OperatingSystem.IsWindows() ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "wintap"): Path.Combine("/var/lib", "wintap");
-        string parquetDir = Path.Combine(baseDir, "parquet", "merged");
+        string dataRoot = Environment.GetEnvironmentVariable("WINTAP_DATA_ROOT")
+            ?? (OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Wintap", "data")
+                : Path.Combine("/var/log/lintap", "data"));
+        string parquetDir = Path.Combine(dataRoot, "raw_sensor");
 
-        string processParquet = Path.Combine(parquetDir, "*+raw_process+*.parquet");
-        string tcpParquet = Path.Combine(parquetDir, "*+raw_tcp_process_conn_incr+*.parquet");
-        string udpParquet = Path.Combine(parquetDir, "*+raw_udp_process_conn_incr+*.parquet");
-        string registryParquet = Path.Combine(parquetDir, "*+raw_registry+*.parquet");
-        string fileParquet = Path.Combine(parquetDir, "*+raw_file+*.parquet");
-        string wmiParquet = Path.Combine(parquetDir, "*+raw_wmi+*.parquet");
-        string apiParquet = Path.Combine(parquetDir, "*+raw_apicall+*.parquet");
-        string memoryParquet = Path.Combine(parquetDir, "*+raw_memorymap+*.parquet");
-        string ilParquet = Path.Combine(parquetDir, "*+raw_imageload+*.parquet");
-        string fcParquet = Path.Combine(parquetDir, "*+raw_focuschange+*.parquet");
-        string cpuParquet = Path.Combine(parquetDir, "*+raw_cputrigger+*.parquet");
-        string eventlogParquet = Path.Combine(parquetDir, "*+raw_eventlogevent+*.parquet");
+        string processParquet = Path.Combine(parquetDir, "raw_process", "**", "*.parquet");
+        string tcpParquet = Path.Combine(parquetDir, "raw_tcp_process_conn_incr", "**", "*.parquet");
+        string udpParquet = Path.Combine(parquetDir, "raw_udp_process_conn_incr", "**", "*.parquet");
+        string registryParquet = Path.Combine(parquetDir, "raw_registry", "**", "*.parquet");
+        string fileParquet = Path.Combine(parquetDir, "raw_file", "**", "*.parquet");
+        string wmiParquet = Path.Combine(parquetDir, "raw_wmi", "**", "*.parquet");
+        string apiParquet = Path.Combine(parquetDir, "raw_apicall", "**", "*.parquet");
+        string memoryParquet = Path.Combine(parquetDir, "raw_memorymap", "**", "*.parquet");
+        string ilParquet = Path.Combine(parquetDir, "raw_imageload", "**", "*.parquet");
+        string fcParquet = Path.Combine(parquetDir, "raw_focuschange", "**", "*.parquet");
+        string cpuParquet = Path.Combine(parquetDir, "raw_cputrigger", "**", "*.parquet");
+        string eventlogParquet = Path.Combine(parquetDir, "raw_eventlogevent", "**", "*.parquet");
 
         string parquetGlobSql = processParquet.Replace(@"\", @"\\");
         string sqlProcess = $@"

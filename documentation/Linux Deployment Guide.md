@@ -72,12 +72,11 @@ sudo rsync -a /tmp/lintap-build/wintap/bin/Debug/net8.0/ /opt/lintap/
 
 If your build output is in the repo tree instead of `/tmp`, copy that directory instead.
 
-## Create Runtime Directories
+## Create Data and Runtime Directories
 
 ```bash
-sudo mkdir -p /var/lib/lintap
-sudo mkdir -p /var/lib/lintap/Logs
-sudo chown -R root:root /opt/lintap /var/lib/lintap
+sudo mkdir -p /var/log/lintap/data /var/log/lintap/runtime
+sudo chown -R root:root /opt/lintap /var/log/lintap
 ```
 
 ## Recommended Bring-Up
@@ -87,7 +86,8 @@ Before creating a long-running service, do one foreground validation run:
 ```bash
 cd /opt/lintap
 sudo env \
-  WINTAP_DATA_ROOT=/var/lib/lintap \
+  WINTAP_DATA_ROOT=/var/log/lintap/data \
+  WINTAP_RUNTIME_ROOT=/var/log/lintap/runtime \
   WINTAP_DISABLE_MCP=true \
   WINTAP_DISABLE_DUCKDB_UI=true \
   WINTAP_DISABLE_ETL=true \
@@ -121,7 +121,8 @@ RestartSec=10
 User=root
 Group=root
 
-Environment=WINTAP_DATA_ROOT=/var/lib/lintap
+Environment=WINTAP_DATA_ROOT=/var/log/lintap/data
+Environment=WINTAP_RUNTIME_ROOT=/var/log/lintap/runtime
 Environment=WINTAP_DISABLE_MCP=true
 Environment=WINTAP_DISABLE_DUCKDB_UI=true
 Environment=WINTAP_DISABLE_ETL=false
@@ -165,10 +166,10 @@ Check service logs:
 sudo journalctl -u lintap -f
 ```
 
-Check the app log under the configured data root:
+Check the app log under the configured runtime root:
 
 ```bash
-sudo tail -f /var/lib/lintap/Logs/Lintap.log
+sudo tail -f /var/log/lintap/runtime/Logs/Lintap.log
 ```
 
 Verify the web host:
@@ -188,9 +189,9 @@ sudo bpftool prog list
 Once `Lintap` is running, use the developer tools from the repo:
 
 ```bash
-python3 devtools/network_capture_smoke_test.py --data-root /var/lib/lintap --timeout 240 --poll-interval 10
-python3 devtools/process_capture_smoke_test.py --data-root /var/lib/lintap --timeout 240 --poll-interval 10
-python3 devtools/file_capture_smoke_test.py --data-root /var/lib/lintap --timeout 240 --poll-interval 10
+python3 devtools/network_capture_smoke_test.py --data-root /var/log/lintap/data --timeout 240 --poll-interval 10
+python3 devtools/process_capture_smoke_test.py --data-root /var/log/lintap/data --timeout 240 --poll-interval 10
+python3 devtools/file_capture_smoke_test.py --data-root /var/log/lintap/data --timeout 240 --poll-interval 10
 ```
 
 See [`../devtools/README.md`](../devtools/README.md) for details.

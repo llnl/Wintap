@@ -11,7 +11,7 @@ Prereqs:
   - Either the Python `duckdb` package is installed or `duckdb` CLI is on PATH.
 
 Examples:
-  python3 devtools/file_capture_smoke_test.py --data-root /var/log/lintap --timeout 180
+  python3 devtools/file_capture_smoke_test.py --data-root /var/log/lintap/data --timeout 180
 
   sudo python3 devtools/file_capture_smoke_test.py \
     --start-lintap \
@@ -57,7 +57,9 @@ def default_data_root() -> Path:
             reverse=True,
         )
         for cand in candidates:
-            parquet_root = cand / "parquet"
+            parquet_root = cand / "raw_sensor"
+            if parquet_root.exists() and any(parquet_root.rglob("*.parquet")):
+                return cand
             if parquet_root.exists() and any(parquet_root.rglob("*.parquet")):
                 return cand
     except Exception:
@@ -66,16 +68,18 @@ def default_data_root() -> Path:
     system = platform.system().lower()
     if system == "linux":
         log_root = Path("/var/log/lintap")
-        if (log_root / "Logs" / "Lintap.log").exists() or (log_root / "parquet").exists():
-            return log_root
-        return Path("/var/lib/lintap")
+        if (log_root / "data" / "raw_sensor").exists():
+            return log_root / "data"
+        if (log_root / "runtime" / "Logs" / "Lintap.log").exists():
+            return log_root / "data"
+        return log_root / "data"
     if system == "darwin":
         return Path("/Library/Application Support/Mactap")
     if system == "windows":
         program_data = os.environ.get("PROGRAMDATA", r"C:\\ProgramData")
         return Path(program_data) / "Wintap"
 
-    return Path("/var/lib/lintap")
+    return Path("/var/log/lintap/data")
 
 
 def sql_string(value: str) -> str:
@@ -362,7 +366,7 @@ def main() -> int:
         "--parquet-root",
         type=Path,
         default=None,
-        help="Override parquet root. Defaults to <data-root>/parquet.",
+        help="Override parquet root. Defaults to <data-root>/raw_sensor.",
     )
     parser.add_argument(
         "--start-lintap",
@@ -393,7 +397,7 @@ def main() -> int:
         "--log-file",
         type=Path,
         default=None,
-        help="Lintap log path for --require-no-serializer-drops (defaults to <data-root>/Logs/Lintap.log)",
+        help="Lintap log path for --require-no-serializer-drops (defaults to <runtime-root>/Logs/Lintap.log)",
     )
     parser.add_argument(
         "--serializer-observation-seconds",
@@ -436,8 +440,9 @@ def main() -> int:
                         print("  " + line)
                 return 2
 
-        parquet_root = args.parquet_root or (data_root / "parquet")
-        log_path = args.log_file or (data_root / "Logs" / "Lintap.log")
+        parquet_root = args.parquet_root or (data_root / "raw_sensor")
+        runtime_root = Path(os.environ.get("WINTAP_RUNTIME_ROOT", str(data_root.parent / "runtime")))
+        log_path = args.log_file or (runtime_root / "Logs" / "Lintap.log")
         log_start_offset = 0
         if args.require_no_serializer_drops:
             try:

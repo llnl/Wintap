@@ -168,7 +168,7 @@ namespace gov.llnl.wintap.core.shared
                 return Path.Combine("/Library/Application Support/Mactap", leaf);
             }
 
-            return Path.Combine("/var/lib/lintap", leaf);
+            return Path.Combine("/var/log/lintap", leaf);
         }
 
         private static string _overriddenDataRoot = null;
