@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using DuckDB.NET.Data;
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.infrastructure;
@@ -142,6 +143,25 @@ namespace Wintap.Tests
         public ProcessResolverTests(Xunit.Abstractions.ITestOutputHelper output)
         {
             _output = output;
+        }
+
+        [Fact]
+        [Trait("Category", "profile")]
+        public void RepeatedUnresolvedOwnerLookups_ProfileDurableResolverCost()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 16, enableMaintenance: false,
+                registrationLogSink: (_, _) => { });
+            const int lookups = 1000;
+            var stopwatch = Stopwatch.StartNew();
+
+            for (int i = 0; i < lookups; i++)
+            {
+                Assert.Null(resolver.ResolveProcessAtTime(999999, BaseTime));
+            }
+
+            stopwatch.Stop();
+            _output.WriteLine($"Repeated unresolved durable lookups: count={lookups}; elapsed_ms={stopwatch.Elapsed.TotalMilliseconds:F2}; avg_us={(stopwatch.Elapsed.TotalMilliseconds * 1000 / lookups):F2}");
         }
 
         [Theory, Trait("Category", "pai-08"), Trait("Category", "pai-04"), Trait("Category", "pai-06")]

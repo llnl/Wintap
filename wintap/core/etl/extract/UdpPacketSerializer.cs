@@ -19,7 +19,7 @@ namespace gov.llnl.wintap.core.etl.extract
 {
     internal class UdpPacketSerializer : Serializer
     {
-        private System.Timers.Timer networkEventTimer;  // guard against stalled ETW session provider in the OS, every net event will reset this timer, on elapse - wintap will restart.
+        private System.Timers.Timer networkEventTimer;  // guard against a stalled network event stream
         private string esperQuery;
         private List<NIC> activeNics;
 
@@ -32,7 +32,7 @@ namespace gov.llnl.wintap.core.etl.extract
 
         private void NetworkEventTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            WintapLogger.Log.Append("ETW session provider has ceased to send network events for 60 seconds.  restart Wintap?", LogLevel.Info);
+            WintapLogger.Log.Append(NetworkSerializerContract.InactivityMessage, LogLevel.Info);
         }
 
         protected override void HandleSensorEvent(EventBean sensorEvent)
@@ -49,7 +49,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 dynamic flatMsg = (ExpandoObject)pci.ToDynamic();
                 flatMsg.ProcessName = sensorEvent["ProcessName"].ToString();
                 flatMsg.ActivityType = pci.IpEvent;
-                flatMsg.AgentId = sensorEvent["AgentId"].ToString();
+                flatMsg.AgentId = NetworkSerializerContract.GetAgentId(sensorEvent["AgentId"]);
                 this.Save(flatMsg);
                 sensorEvent = null;
                 flatMsg = null;
