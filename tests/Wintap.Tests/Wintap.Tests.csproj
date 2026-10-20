@@ -28,4 +28,10 @@
     <ProjectReference Include="..\..\wintap\Wintap.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\..\wintap\wintapstate.json" Link="wintapstate.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
