@@ -7,6 +7,103 @@ namespace Wintap.Tests
 {
     public class BoundedEventTimeCacheTests
     {
+        [Fact, Trait("Category", "pai-01"), Trait("Category", "pai-03")]
+        public void SamePidEvictionKeepsNewIdentityReachable()
+        {
+            var cache = new BoundedEventTimeCache<string>(1);
+            cache.Set(42, "old", BaseTime, BaseTime.AddSeconds(10), "old");
+            cache.Set(42, "new", BaseTime.AddSeconds(20), BaseTime.AddSeconds(30), "new");
+            Assert.True(cache.TryGet(42, BaseTime.AddSeconds(25), out string value));
+            Assert.Equal("new", value);
+            Assert.False(cache.TryGet(42, BaseTime.AddSeconds(5), out _));
+            cache.TakeCounters(out long hits, out long misses, out long evictions, out int entries);
+            Assert.Equal(1, hits);
+            Assert.Equal(1, misses);
+            Assert.Equal(1, evictions);
+            Assert.Equal(1, entries);
+        }
+
+        [Fact, Trait("Category", "pai-03")]
+        public void SamePidEvictionPreservesAnotherPid()
+        {
+            var cache = new BoundedEventTimeCache<string>(2);
+            cache.Set(42, "old", BaseTime, BaseTime.AddSeconds(10), "old");
+            cache.Set(7, "other", BaseTime, BaseTime.AddSeconds(30), "other");
+            cache.Set(42, "new", BaseTime.AddSeconds(20), BaseTime.AddSeconds(30), "new");
+
+            Assert.False(cache.TryGet(42, BaseTime.AddSeconds(5), out _));
+            Assert.True(cache.TryGet(7, BaseTime.AddSeconds(5), out string other));
+            Assert.Equal("other", other);
+            Assert.True(cache.TryGet(42, BaseTime.AddSeconds(25), out string newest));
+            Assert.Equal("new", newest);
+            cache.TakeCounters(out _, out _, out long evictions, out int entries);
+            Assert.Equal(1, evictions);
+            Assert.Equal(2, entries);
+        }
+
+        [Fact, Trait("Category", "pai-03")]
+        public void SamePidEvictionPreservesSurvivingIdentities()
+        {
+            var cache = new BoundedEventTimeCache<string>(2);
+            cache.Set(42, "old", BaseTime, BaseTime.AddSeconds(10), "old");
+            cache.Set(42, "middle", BaseTime.AddSeconds(20), BaseTime.AddSeconds(30), "middle");
+            cache.Set(42, "new", BaseTime.AddSeconds(40), BaseTime.AddSeconds(50), "new");
+
+            Assert.False(cache.TryGet(42, BaseTime.AddSeconds(5), out _));
+            Assert.True(cache.TryGet(42, BaseTime.AddSeconds(25), out string middle));
+            Assert.Equal("middle", middle);
+            Assert.True(cache.TryGet(42, BaseTime.AddSeconds(45), out string newest));
+            Assert.Equal("new", newest);
+            cache.TakeCounters(out _, out _, out long evictions, out int entries);
+            Assert.Equal(1, evictions);
+            Assert.Equal(2, entries);
+        }
+
+        [Fact, Trait("Category", "pai-03")]
+        public void RepeatedSamePidEvictionRetainsOnlyLatestWithoutCountingProbes()
+        {
+            var cache = new BoundedEventTimeCache<int>(1);
+            for (int i = 0; i < 100; i++)
+            {
+                DateTime start = BaseTime.AddSeconds(i * 20);
+                cache.Set(42, i.ToString(), start, start.AddSeconds(10), i);
+                Assert.True(cache.TryGet(42, start, out int current));
+                Assert.Equal(i, current);
+                Assert.False(cache.TryGet(42, start.AddTicks(-1), out _));
+                Assert.True(cache.TryGetWithoutCounting(42, start, out int probe));
+                Assert.Equal(i, probe);
+                for (int old = 0; old < i; old++)
+                {
+                    Assert.False(cache.TryGetWithoutCounting(42, BaseTime.AddSeconds(old * 20), out _));
+                }
+                Assert.False(cache.TryGetWithoutCounting(42, start.AddSeconds(11), out _));
+                cache.TakeCounters(out long hits, out long misses, out long evictions, out int entries);
+                Assert.Equal(1, hits);
+                Assert.Equal(1, misses);
+                Assert.Equal(i == 0 ? 0 : 1, evictions);
+                Assert.Equal(1, entries);
+            }
+            cache.TakeCounters(out long remainingHits, out long remainingMisses, out long remainingEvictions, out int remainingEntries);
+            Assert.Equal(0, remainingHits);
+            Assert.Equal(0, remainingMisses);
+            Assert.Equal(0, remainingEvictions);
+            Assert.Equal(1, remainingEntries);
+        }
+
+        [Theory, Trait("Category", "pai-01")]
+        [InlineData(false)] [InlineData(true)]
+        public void CurrentlySamePidControlsRemainReachable(bool updateSameIdentity)
+        {
+            var cache = new BoundedEventTimeCache<string>(updateSameIdentity ? 1 : 2);
+            cache.Set(42, "old", BaseTime, BaseTime.AddSeconds(10), "old");
+            cache.Set(42, updateSameIdentity ? "old" : "new", BaseTime.AddSeconds(20), BaseTime.AddSeconds(30), "new");
+            // These controls already have the future-correct reachability behavior.
+            Assert.True(cache.TryGet(42, BaseTime.AddSeconds(25), out string value));
+            Assert.Equal("new", value);
+            Assert.Equal(!updateSameIdentity, cache.TryGet(42, BaseTime.AddSeconds(5), out _));
+            cache.TakeCounters(out _, out _, out long evictions, out int entries);
+            Assert.Equal(updateSameIdentity ? 1 : 2, entries); Assert.Equal(0, evictions);
+        }
         private static readonly DateTime BaseTime = new DateTime(2026, 8, 30, 12, 0, 0, DateTimeKind.Utc);
 
         [Fact]

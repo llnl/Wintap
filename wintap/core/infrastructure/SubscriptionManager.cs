@@ -90,6 +90,14 @@ namespace gov.llnl.wintap.core.infrastructure
             WintapLogger.Log.Append("Done loading collectors", LogLevel.Info);
         }
 
+#if WINDOWS
+        // Membership confirms successful subscription startup, not consumer liveness.
+        internal bool HasStartedProcessAndFileCollectors =>
+            winCollectors != null &&
+            winCollectors.Exists(c => c is gov.llnl.wintap.platform.windows.collect.etw.WindowsProcessSensor) &&
+            winCollectors.Exists(c => c is gov.llnl.wintap.platform.windows.collect.etw.FileSensor);
+#endif
+
         internal void Stop()
         {
             WintapLogger.Log.Append("Serializer shutting down. ", LogLevel.Info);

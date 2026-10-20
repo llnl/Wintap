@@ -37,7 +37,9 @@ namespace gov.llnl.wintap.platform.windows.collect.shared
     /// Enables the undocumented capture mode of a manifest ETW provider
     /// (Microsoft-Windows-Kernel-Registry) on a live TraceEventSession:
     /// disable-then-enable with a 4-byte 0xFFFFFFFF EVENT_FILTER_DESCRIPTOR
-    /// via EnableTraceEx2, plus periodic re-assert. Mechanism record:
+    /// via EnableTraceEx2 at startup/recovery, plus periodic enable-only refresh.
+    /// Routine refresh must not disable a healthy provider and lose intervening writes.
+    /// Mechanism record:
     /// ../Wintap-Analytics/wiki/decision/registry-provider-strategy.md
     /// </summary>
     internal sealed class RegistryCaptureEnabler : IDisposable
@@ -164,19 +166,19 @@ namespace gov.llnl.wintap.platform.windows.collect.shared
         /// </summary>
         internal void EnableCapture()
         {
-            AssertCaptureFilter();
+            AssertCaptureFilter(resetProvider: true);
             log(
                 $"Registry provider {providerId} mask 0x{matchAnyKeyword:X}: capture filter asserted",
                 LogLevel.Info);
         }
 
-        /// <summary>Re-runs the complete capture assertion sequence.</summary>
-        internal void ReassertCapture()
+        /// <summary>Refreshes capture without a disable gap unless recovery requires a reset.</summary>
+        internal void ReassertCapture(bool resetProvider = false)
         {
-            AssertCaptureFilter();
+            AssertCaptureFilter(resetProvider);
             Interlocked.Increment(ref reassertCount);
             log(
-                $"Registry provider {providerId} mask 0x{matchAnyKeyword:X}: capture filter re-asserted",
+                $"Registry provider {providerId} mask 0x{matchAnyKeyword:X}: capture filter re-asserted (provider_reset={resetProvider})",
                 LogLevel.Info);
         }
 
@@ -186,7 +188,7 @@ namespace gov.llnl.wintap.platform.windows.collect.shared
             log(
                 $"Registry provider {providerId}: capture loss suspected; re-asserting capture filter",
                 LogLevel.Info);
-            ReassertCapture();
+            ReassertCapture(resetProvider: true);
         }
 
         internal void StartReassertTimer(TimeSpan interval)
@@ -231,31 +233,34 @@ namespace gov.llnl.wintap.platform.windows.collect.shared
             StopReassertTimer();
         }
 
-        private void AssertCaptureFilter()
+        private void AssertCaptureFilter(bool resetProvider)
         {
             lock (enableLock)
             {
                 ulong currentTraceHandle = GetOrAcquireTraceHandle();
-                var disableParameters = new ENABLE_TRACE_PARAMETERS
+                if (resetProvider)
                 {
-                    Version = 2
-                };
+                    var disableParameters = new ENABLE_TRACE_PARAMETERS
+                    {
+                        Version = 2
+                    };
 
-                int disableResult = nativeEnableTraceEx2(
-                    currentTraceHandle,
-                    in providerId,
-                    EVENT_CONTROL_CODE_DISABLE_PROVIDER,
-                    0,
-                    0,
-                    0,
-                    EnableTimeoutMs,
-                    in disableParameters);
+                    int disableResult = nativeEnableTraceEx2(
+                        currentTraceHandle,
+                        in providerId,
+                        EVENT_CONTROL_CODE_DISABLE_PROVIDER,
+                        0,
+                        0,
+                        0,
+                        EnableTimeoutMs,
+                        in disableParameters);
 
-                if (disableResult != 0)
-                {
-                    log(
-                        $"Registry provider {providerId}: disable before capture assertion returned win32 error {disableResult}; continuing",
-                        LogLevel.Info);
+                    if (disableResult != 0)
+                    {
+                        log(
+                            $"Registry provider {providerId}: disable before capture assertion returned win32 error {disableResult}; continuing",
+                            LogLevel.Info);
+                    }
                 }
 
                 byte[] captureFlags = BitConverter.GetBytes(0xFFFFFFFFu);

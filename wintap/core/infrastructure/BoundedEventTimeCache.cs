@@ -107,29 +107,33 @@ namespace gov.llnl.wintap.core.infrastructure
 
             lock (gate)
             {
-                if (!entriesByKey.TryGetValue(key, out var candidates))
+                if (entriesByKey.TryGetValue(key, out var candidates))
                 {
-                    candidates = new List<LinkedListNode<Entry>>();
-                    entriesByKey[key] = candidates;
-                }
-
-                for (int i = 0; i < candidates.Count; i++)
-                {
-                    LinkedListNode<Entry> existing = candidates[i];
-                    if (string.Equals(existing.Value.Identity, identity, StringComparison.Ordinal))
+                    for (int i = 0; i < candidates.Count; i++)
                     {
-                        existing.Value.ValidFromUtc = validFromUtc;
-                        existing.Value.ValidThroughUtc = validThroughUtc;
-                        existing.Value.Value = value;
-                        lru.Remove(existing);
-                        lru.AddLast(existing);
-                        return;
+                        LinkedListNode<Entry> existing = candidates[i];
+                        if (string.Equals(existing.Value.Identity, identity, StringComparison.Ordinal))
+                        {
+                            existing.Value.ValidFromUtc = validFromUtc;
+                            existing.Value.ValidThroughUtc = validThroughUtc;
+                            existing.Value.Value = value;
+                            lru.Remove(existing);
+                            lru.AddLast(existing);
+                            return;
+                        }
                     }
                 }
 
                 while (lru.Count >= capacity)
                 {
                     EvictOldest();
+                }
+
+                // Eviction may have removed this PID's last entry and its index key.
+                if (!entriesByKey.TryGetValue(key, out candidates))
+                {
+                    candidates = new List<LinkedListNode<Entry>>();
+                    entriesByKey[key] = candidates;
                 }
 
                 var entry = new Entry

@@ -5,6 +5,7 @@ using gov.llnl.wintap.core.shared;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Globalization;
 using System.Threading;
 using System.Timers;
 
@@ -38,6 +39,10 @@ namespace gov.llnl.wintap.core.infrastructure.health
         private int enabled;
         private int started;
         private int disableLogged;
+        private int flushOwned;
+        private readonly int attributionCheckIndex;
+        private readonly long[] passedCounts, unresolvedCounts, previousPassed, previousUnresolved;
+        private readonly DateTime monitorCreatedUtc;
 
         internal SensorHealthMonitor(IReadOnlyList<IWintapHealthCheck> checks, bool enabled, int sampleCap, int flushIntervalSeconds, Action<string, LogLevel> logSink = null)
         {
@@ -55,7 +60,12 @@ namespace gov.llnl.wintap.core.infrastructure.health
             FlushIntervalSeconds = Math.Max(5, flushIntervalSeconds);
             this.enabled = enabled ? 1 : 0;
             this.logSink = logSink ?? ((line, level) => WintapLogger.Log.Append(line, level));
-            windowStartUtc = DateTime.UtcNow;
+            windowStartUtc = monitorCreatedUtc = DateTime.UtcNow;
+            attributionCheckIndex = FindAttributionCheck(this.checks);
+            passedCounts = new long[checkedCounts.Length];
+            unresolvedCounts = new long[checkedCounts.Length];
+            previousPassed = new long[checkedCounts.Length];
+            previousUnresolved = new long[checkedCounts.Length];
 
             flushTimer = new System.Timers.Timer(FlushIntervalSeconds * 1000) { AutoReset = true };
             flushTimer.Elapsed += FlushTimerElapsed;
@@ -93,7 +103,13 @@ namespace gov.llnl.wintap.core.infrastructure.health
                 for (int checkIndex = 0; checkIndex < checks.Count; checkIndex++)
                 {
                     IWintapHealthCheck check = checks[checkIndex];
-                    if (!check.Passes(msg))
+                    bool passes = check.Passes(msg);
+                    if (checkIndex == attributionCheckIndex)
+                    {
+                        if (passes) Interlocked.Increment(ref passedCounts[streamIndex]);
+                        else Interlocked.Increment(ref unresolvedCounts[streamIndex]);
+                    }
+                    if (!passes)
                     {
                         int failureIndex = streamIndex * checks.Count + checkIndex;
                         Interlocked.Increment(ref failureCounts[failureIndex]);
@@ -136,10 +152,18 @@ namespace gov.llnl.wintap.core.infrastructure.health
             try { FlushNow(); } catch { }
         }
 
-        /// <summary>Not safe for concurrent callers; the timer is the sole production caller.</summary>
+        /// <summary>Timer, Stop, and explicit callers share nonblocking flush ownership.</summary>
         internal void FlushNow()
         {
+            if (Interlocked.CompareExchange(ref flushOwned, 1, 0) != 0) return;
+            try { FlushOwned(); }
+            finally { Volatile.Write(ref flushOwned, 0); }
+        }
+
+        private void FlushOwned()
+        {
             if (!IsEnabled) return;
+            DateTime beginUtc = windowStartUtc;
             DateTime endUtc = DateTime.UtcNow;
             bool hasActivity = false;
             StringBuilder summary = new StringBuilder("SensorHealth: window=");
@@ -156,6 +180,7 @@ namespace gov.llnl.wintap.core.infrastructure.health
                 }
             }
             windowStartUtc = endUtc;
+            FlushAttribution(beginUtc, endUtc);
             if (!hasActivity) return;
             SafeLog(summary.ToString(), LogLevel.Info);
 
@@ -185,6 +210,57 @@ namespace gov.llnl.wintap.core.infrastructure.health
             }
         }
 
+        private static int FindAttributionCheck(IReadOnlyList<IWintapHealthCheck> candidates)
+        {
+            try
+            {
+                int found = -1;
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (!string.Equals(candidates[i].Name, "process_unresolved", StringComparison.Ordinal)) continue;
+                    if (found >= 0) return -1;
+                    found = i;
+                }
+                return found;
+            }
+            catch { return -1; }
+        }
+
+        private void FlushAttribution(DateTime beginUtc, DateTime endUtc)
+        {
+            if (attributionCheckIndex < 0) return;
+            long intervalEvaluated = 0, intervalFailed = 0, totalEvaluated = 0, totalFailed = 0;
+            for (int stream = 0; stream < checkedCounts.Length; stream++)
+            {
+                long passed = Interlocked.Read(ref passedCounts[stream]);
+                long failed = Interlocked.Read(ref unresolvedCounts[stream]);
+                long deltaFailed = failed - previousUnresolved[stream];
+                long deltaEvaluated = passed - previousPassed[stream] + deltaFailed;
+                previousPassed[stream] = passed;
+                previousUnresolved[stream] = failed;
+                long evaluated = passed + failed;
+                intervalEvaluated += deltaEvaluated;
+                intervalFailed += deltaFailed;
+                totalEvaluated += evaluated;
+                totalFailed += failed;
+                if (evaluated != 0)
+                    LogAttribution(beginUtc, endUtc, StreamName(stream), deltaEvaluated, deltaFailed, evaluated, failed);
+            }
+            if (totalEvaluated != 0)
+                LogAttribution(beginUtc, endUtc, "_overall", intervalEvaluated, intervalFailed, totalEvaluated, totalFailed);
+        }
+
+        private void LogAttribution(DateTime beginUtc, DateTime endUtc, string stream,
+            long intervalEvaluated, long intervalFailed, long totalEvaluated, long totalFailed)
+        {
+            string intervalPct = intervalEvaluated == 0 ? "n/a" :
+                (100.0 * intervalFailed / intervalEvaluated).ToString("F6", CultureInfo.InvariantCulture);
+            SafeLog(string.Format(CultureInfo.InvariantCulture,
+                "SensorHealth ATTRIBUTION: window={0}..{1} since={2} stream={3} intervalEvaluated={4} intervalUnresolved={5} intervalUnresolvedPct={6} totalEvaluated={7} totalUnresolved={8} totalUnresolvedPct={9}",
+                FormatUtc(beginUtc), FormatUtc(endUtc), FormatUtc(monitorCreatedUtc), stream,
+                intervalEvaluated, intervalFailed, intervalPct, totalEvaluated, totalFailed,
+                (100.0 * totalFailed / totalEvaluated).ToString("F6", CultureInfo.InvariantCulture)), LogLevel.Info);
+        }
         internal void EvaluateLivenessTick(DateTime utcNow)
         {
             if (!IsEnabled || Volatile.Read(ref started) == 0) return;

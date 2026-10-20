@@ -14,6 +14,18 @@ namespace gov.llnl.wintap.core.etl.model
         public int SerializationIntervalSec { get; set; }
         public int? FileSerializationIntervalSec { get; set; }
         public int? FileSerializationHighWaterEvents { get; set; }
+        public int? RegistrySerializationIntervalSec { get; set; }
+        public int? RegistrySerializationHighWaterEvents { get; set; }
+        public int? RegistrySerializationMaxQueueEvents { get; set; }
+        // Keys are serializer class names, e.g. "tcpconnectionserializer".
+        public Dictionary<string, SerializerOptions> Serializers { get; set; } = new();
+        public class SerializerOptions
+        {
+            public bool? UseDedicatedWorker { get; set; }
+            public int? IntervalSec { get; set; }
+            public int? HighWaterEvents { get; set; }
+            public int? MaxQueueEvents { get; set; }
+        }
         public int UploadIntervalSec { get; set; }
         public long RawSensorMaxCacheSizeBytes { get; set; }
         public bool WriteToParquet { get; set; }

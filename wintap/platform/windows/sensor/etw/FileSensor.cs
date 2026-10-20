@@ -16,6 +16,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using gov.llnl.wintap.platform.windows.infrastructure;
 
 namespace gov.llnl.wintap.platform.windows.collect.etw
 {
@@ -29,6 +30,8 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         private const string EtlFileExtension = ".etl";
 
         private ConcurrentDictionary<ulong, string> fileKeyToPath;
+        private readonly WindowsFilePathNormalizer pathNormalizer = new WindowsFilePathNormalizer(
+            () => WindowsFileVolumeMap.Discover(), summary: text => WintapLogger.Log.Append(text, LogLevel.Debug));
 
         internal enum FileIoSubscription
         {
@@ -55,6 +58,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         /// <returns>True if the sensor started successfully.</returns>
         public override bool Start()
         {
+            pathNormalizer.Initialize();
             foreach (FileIoSubscription subscription in BuildSubscriptionPlan(Properties.Settings.Default.CollectFileRead))
             {
                 SubscribeKernelFileIoEvent(subscription);
@@ -307,31 +311,21 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         /// </summary>
         private void sendFileEvent(string filePath, int pid, DateTime eventTime, WintapMessage.ActivityTypeEnum opName, int bytesRequested, string activityId, string correlationId)
         {
-            if (string.IsNullOrEmpty(filePath))
-            {
-                return;
-            }
-
-            if (filePath.EndsWith(EtlFileExtension, StringComparison.OrdinalIgnoreCase))
-            {
-                return; // Prevent feedback scenario with ETW internals
-            }
-
-            WintapMessage wintapBuilder = new WintapMessage(eventTime, pid, WintapMessage.MessageTypeEnum.File)
-            {
-                File = new WintapMessage.FileActivityObject
-                {
-                    Path = filePath.ToLower(),
-                    BytesRequested = bytesRequested
-                },
-                ActivityType = opName,
-                ActivityId = activityId,
-                CorrelationId = correlationId
-            };
-
-            EventChannel.Send(wintapBuilder);
+            var message = CreateFileMessage(filePath, pid, eventTime, opName, bytesRequested, activityId, correlationId, pathNormalizer.Normalize);
+            if (message != null) EventChannel.Send(message);
         }
 
+        internal static WintapMessage CreateFileMessage(string filePath, int pid, DateTime eventTime,
+            WintapMessage.ActivityTypeEnum opName, int bytesRequested, string activityId, string correlationId,
+            Func<string, string> normalize)
+        {
+            if (string.IsNullOrEmpty(filePath) || filePath.EndsWith(EtlFileExtension, StringComparison.OrdinalIgnoreCase)) return null;
+            return new WintapMessage(eventTime, pid, WintapMessage.MessageTypeEnum.File)
+            {
+                File = new WintapMessage.FileActivityObject { Path = normalize(filePath), BytesRequested = bytesRequested },
+                ActivityType = opName, ActivityId = activityId, CorrelationId = correlationId
+            };
+        }
         /// <summary>
         /// Safely attempts to get the activity ID from the trace data.
         /// </summary>
@@ -384,7 +378,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 {
                     string activityId = TryGetActivityId(obj);
                     string correlationId = TryGetCorrelationId(obj);
-                    sendFileEvent(filePath.ToLower(), obj.ProcessID, obj.TimeStamp, WintapMessage.ActivityTypeEnum.Delete, 0, activityId, correlationId);
+                    sendFileEvent(filePath, obj.ProcessID, obj.TimeStamp, WintapMessage.ActivityTypeEnum.Delete, 0, activityId, correlationId);
                 }
 
                 fileKeyToPath.TryRemove(obj.FileKey, out _);

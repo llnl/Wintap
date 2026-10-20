@@ -694,6 +694,7 @@ namespace Wintap.Tests
 
         [Fact]
         [Trait("Category", "ptr-03")]
+        [Trait("Category", "pai-07")]
         public void InitializeSnapshotRefresh_ReconcileFailureWarnsAndContinues()
         {
             var logEntries = new List<(string Message, LogLevel Level)>();
@@ -706,7 +707,7 @@ namespace Wintap.Tests
             Assert.True(sensor.InitializeSnapshotRefresh());
             Assert.Contains(logEntries, entry =>
                 entry.Level == LogLevel.Warn &&
-                entry.Message.Contains("stale open rows will be closed by the maintenance sweep"));
+                entry.Message == "Windows process startup reconcile failed; continuing with unreconciled history: reconcile failed");
         }
 
         [Fact]

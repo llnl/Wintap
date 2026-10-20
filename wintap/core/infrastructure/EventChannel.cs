@@ -88,6 +88,28 @@ namespace gov.llnl.wintap.core.infrastructure
         // Esper configuration and runtime
         private static Configuration esperConfig;
         private static EPRuntime esperRuntime;
+        private static readonly Lazy<AttributionRetryQueue> attributionRetries = new(CreateAttributionRetries);
+
+        private static AttributionRetryQueue CreateAttributionRetries()
+        {
+            string streams = ConfigManager.GetValue<string>("WINTAP_ATTRIBUTION_RETRY_STREAMS");
+            try { AttributionRetryQueue.ParseStreams(streams); }
+            catch (ArgumentException ex)
+            {
+                WintapLogger.Log.Append($"{ex.Message}; using default Registry attribution retries", LogLevel.Warn);
+                streams = null;
+            }
+            return new AttributionRetryQueue((message, attempt) => SendCore(message, false, out _, attempt),
+                onError: ex => WintapLogger.Log.Append("Attribution retry failed: " + ex, LogLevel.Error),
+                enabledStreams: streams);
+        }
+
+        internal static void FlushPendingAttributionEvents()
+        {
+            // Materialize and stop even if a concurrent first miss is creating the queue.
+            attributionRetries.Value.Shutdown();
+        }
+
         private static readonly object compileDeployLock = new object();
 
         // Public statistics properties
@@ -253,11 +275,11 @@ namespace gov.llnl.wintap.core.infrastructure
             SendCore(streamedEvent, true, out timing);
         }
 
-        private static void SendCore(WintapMessage streamedEvent, bool measure, out EventSendTiming timing)
+        private static void SendCore(WintapMessage streamedEvent, bool measure, out EventSendTiming timing, int attributionRetryAttempt = 0)
         {
             timing = default;
             // Update events per second calculation
-            totalEvents++;
+            if (attributionRetryAttempt == 0) totalEvents++;
             var now = DateTime.Now;
             if (now.Second != lastTotalEvents)
             {
@@ -302,44 +324,28 @@ namespace gov.llnl.wintap.core.infrastructure
                     if (streamedEvent.MessageType != WintapMessage.MessageTypeEnum.Process)
                     {
                         // For non-Process events: resolve the owning process
-                        ProcessRecord ownerProcess = null;
-                        bool usedCurrentProcessCache = false;
-                        bool canUsePrepopulatedIdentity = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File ||
-                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxAvc ||
-                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxTransition ||
-                            streamedEvent.MessageType == WintapMessage.MessageTypeEnum.SELinuxInteraction;
-                        bool hasPrepopulatedIdentity = canUsePrepopulatedIdentity &&
-                            !string.IsNullOrWhiteSpace(streamedEvent.PidHash) &&
-                            !string.IsNullOrWhiteSpace(streamedEvent.ProcessName);
-
-                        if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File && !hasPrepopulatedIdentity)
+                        ProcessRecord ownerProcess;
+                        bool? fileCacheHit = null;
+                        try
                         {
-                            usedCurrentProcessCache = _processResolver.TryResolveCurrentProcessAtTime(streamedEvent.PID, eventTimeUtc, out ownerProcess);
-                            if (usedCurrentProcessCache)
-                            {
+                            ownerProcess = EventOwnerSelection.ResolveOwner(
+                                _processResolver, streamedEvent, eventTimeUtc, OperatingSystem.IsWindows(), out fileCacheHit);
+                        }
+                        finally
+                        {
+                            // Count a completed File attempt even when the historical lookup throws.
+                            if (fileCacheHit == true)
                                 Interlocked.Increment(ref _fileProcessCacheHits);
-                            }
-                            else
-                            {
+                            else if (fileCacheHit == false)
                                 Interlocked.Increment(ref _fileProcessCacheMisses);
-                            }
                         }
 
-                        if (hasPrepopulatedIdentity)
+                        if (ownerProcess == null && OperatingSystem.IsWindows() &&
+                            attributionRetries.Value.TrySchedule(streamedEvent, attributionRetryAttempt))
                         {
-                            ownerProcess = new ProcessRecord
-                            {
-                                PidHash = streamedEvent.PidHash,
-                                ProcessId = streamedEvent.PID,
-                                ProcessName = streamedEvent.ProcessName,
-                                CreateTime = eventTimeUtc
-                            };
-                        }
-                        else if (!usedCurrentProcessCache)
-                        {
-                            ownerProcess = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File
-                                ? _processResolver.ResolveProcessIdentityAtTime(streamedEvent.PID, eventTimeUtc)
-                                : _processResolver.ResolveProcessAtTime(streamedEvent.PID, eventTimeUtc);
+                            // Do not inspect health, generate an unknown identity, or send to
+                            // Esper until identity is available or bounded retries are exhausted.
+                            return;
                         }
 
                         if (ownerProcess != null)

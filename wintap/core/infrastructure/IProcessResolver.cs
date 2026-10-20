@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Lawrence Livermore National Security, LLC.
  * Produced at the Lawrence Livermore National Laboratory.
  * All rights reserved.
@@ -32,6 +32,9 @@ namespace gov.llnl.wintap.core.infrastructure
         /// Returns false when the PID is not active or the event predates the cached process start.
         /// </summary>
         bool TryResolveCurrentProcessAtTime(int pid, DateTime eventTime, out ProcessRecord process);
+
+        // Narrow fallback for Windows BAM writes emitted immediately after ProcessStop.
+        ProcessRecord ResolveRegistryTeardownProcess(int pid, DateTime eventTime);
 
         void TakeHistoricalIdentityCacheCounters(out long hits, out long misses, out long evictions, out int entries);
 

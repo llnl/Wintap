@@ -130,7 +130,7 @@ namespace Wintap.Tests
         }
 
         [Fact, Trait("Category", "wrc-04")]
-        public void ReassertCaptureRepeatsSequenceAndIncrementsCount()
+        public void ReassertCaptureRefreshesFilterWithoutDisablingAndIncrementsCount()
         {
             var calls = new List<NativeCall>();
             using var enabler = NewEnabler(RecordCalls(calls));
@@ -138,10 +138,22 @@ namespace Wintap.Tests
 
             enabler.ReassertCapture();
 
-            Assert.Equal(4, calls.Count);
+            Assert.Equal(3, calls.Count);
             AssertCallSequence(calls.GetRange(0, 2));
-            AssertCallSequence(calls.GetRange(2, 2));
+            // The refresh carries the same enable arguments as startup, without a disable.
+            AssertCallSequence(new[] { calls[0], calls[2] });
             Assert.Equal(1, enabler.ReassertCount);
+        }
+
+        [Fact]
+        public void PeriodicRefreshNeverDisablesHealthyCapture()
+        {
+            var calls = new List<NativeCall>();
+            using var enabler = NewEnabler(RecordCalls(calls));
+            for (int i = 0; i < 10; i++) enabler.OnReassertTick();
+            Assert.Equal(10, calls.Count);
+            Assert.All(calls, call => Assert.Equal(1u, call.ControlCode));
+            Assert.Equal(10, enabler.ReassertCount);
         }
 
         [Fact, Trait("Category", "wrc-04")]
