@@ -81,14 +81,14 @@ def default_data_root() -> Path:
 
     system = platform.system().lower()
     if system == "linux":
-        return Path("/var/lib/lintap")
+        return Path("/var/log/lintap/data")
     if system == "darwin":
         return Path("/Library/Application Support/Mactap")
     if system == "windows":
         program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
         return Path(program_data) / "Wintap"
 
-    return Path("/var/lib/lintap")
+    return Path("/var/log/lintap/data")
 
 
 def parse_endpoint(url: str) -> EndpointProbe:
@@ -428,7 +428,7 @@ def main() -> int:
         default=None,
         help="Wintap/Lintap data root. Defaults to WINTAP_DATA_ROOT or platform default.",
     )
-    parser.add_argument("--parquet-root", type=Path, default=None, help="Override parquet root. Defaults to <data-root>/parquet.")
+    parser.add_argument("--parquet-root", type=Path, default=None, help="Override parquet root. Defaults to <data-root>/raw_sensor.")
     parser.add_argument(
         "--start-lintap",
         action="store_true",
@@ -475,7 +475,7 @@ def main() -> int:
 
         endpoints = args.endpoints or DEFAULT_ENDPOINTS
         probes = [parse_endpoint(url) for url in endpoints]
-        parquet_root = args.parquet_root or data_root / "parquet"
+        parquet_root = args.parquet_root or data_root / "raw_sensor"
 
         print(f"data root: {data_root}")
         print(f"parquet root: {parquet_root}")

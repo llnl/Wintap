@@ -92,8 +92,13 @@ namespace gov.llnl.wintap.core.etl.load.adapters.baseclass
 
         private string getParquetRelativePathForFile(string localFile)
         {
+            return GetParquetRelativePathForFile(localFile, Paths.ParquetDataPath);
+        }
+
+        internal static string GetParquetRelativePathForFile(string localFile, string parquetDataRoot)
+        {
             string fullPath = Path.GetFullPath(localFile);
-            string parquetRoot = Path.GetFullPath(Paths.ParquetDataPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string parquetRoot = Path.GetFullPath(parquetDataRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
             if (fullPath.StartsWith(parquetRoot, StringComparison.OrdinalIgnoreCase))
             {

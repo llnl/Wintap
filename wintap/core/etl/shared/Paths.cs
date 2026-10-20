@@ -17,8 +17,16 @@ namespace gov.llnl.wintap.core.etl.shared
     internal class Paths
     {
         internal static readonly string ProgramData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        internal static readonly string CsvDataPath = Path.Combine(Env.FileDataRoot, "csv");
-        internal static readonly string ParquetDataPath = Path.Combine(Env.FileDataRoot, "parquet");
-        internal static readonly string RecordingDataPath = Path.Combine(Env.FileDataRoot, "recordings");
+        internal static readonly string DataRoot = Env.FileDataRoot;
+        internal static readonly string RuntimeRoot = Env.FileRuntimeRoot;
+        internal static readonly string ParquetDataPath = DataRoot;
+        internal static readonly string EsperStagingPath = Path.Combine(RuntimeRoot, "esper_staging");
+        internal static readonly string LogDataPath = Path.Combine(RuntimeRoot, "Logs");
+        internal static readonly string EventStorePath = Path.Combine(RuntimeRoot, "event_store");
+        internal static readonly string CsvDataPath = Path.Combine(RuntimeRoot, "csv");
+        internal static readonly string RecordingDataPath = Path.Combine(RuntimeRoot, "recordings");
+        internal static readonly string DiagDataPath = Path.Combine(RuntimeRoot, "diag");
+        internal static readonly string AiDataPath = Path.Combine(RuntimeRoot, "ai");
+        internal static readonly string WorkbenchStatePath = Path.Combine(RuntimeRoot, "workbench-state.json");
     }
 }

@@ -108,7 +108,7 @@ Example:
 
 ```text
 local:
-  /var/lib/wintap/parquet/raw_sensor/raw_process/dayPK=20260529/hourPK=13/file.parquet
+  /var/log/lintap/data/raw_sensor/raw_process/dayPK=20260529/hourPK=13/file.parquet
 
 S3 key, no prefix:
   raw_sensor/raw_process/dayPK=20260529/hourPK=13/file.parquet

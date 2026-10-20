@@ -3,6 +3,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using gov.llnl.wintap.core.shared;
+using gov.llnl.wintap.core.etl.load.adapters.baseclass;
+using gov.llnl.wintap.core.etl.shared;
 using Xunit;
 
 namespace Wintap.Tests
@@ -35,6 +37,32 @@ namespace Wintap.Tests
             Assert.Equal(@"D:\configured", result);
         }
 
+        [Fact]
+        [Trait("Category", "rdp-01")]
+        public void ResolveRuntimeRoot_ProgrammaticOverrideWins()
+        {
+            string result = Env.ResolveRuntimeRoot(
+                @"D:\programmatic-runtime",
+                @"D:\configured-runtime",
+                OSPlatform.Windows,
+                @"C:\ProgramData");
+
+            Assert.Equal(@"D:\programmatic-runtime", result);
+        }
+
+        [Fact]
+        [Trait("Category", "rdp-01")]
+        public void ResolveRuntimeRoot_ConfiguredValueWinsPlatformDefault()
+        {
+            string result = Env.ResolveRuntimeRoot(
+                null,
+                @"D:\configured-runtime",
+                OSPlatform.Windows,
+                @"C:\ProgramData");
+
+            Assert.Equal(@"D:\configured-runtime", result);
+        }
+
         [Theory]
         [Trait("Category", "wpc-09")]
         [InlineData(null, null)]
@@ -48,14 +76,14 @@ namespace Wintap.Tests
                 OSPlatform.Windows,
                 @"C:\ProgramData");
 
-            Assert.Equal(Path.Combine(@"C:\ProgramData", "Wintap"), result);
+            Assert.Equal(@"C:\ProgramData\Wintap\data", result);
         }
 
         [Theory]
         [Trait("Category", "wpc-09")]
-        [InlineData("WINDOWS", @"C:\ProgramData\Wintap")]
-        [InlineData("OSX", "/Library/Application Support/Mactap")]
-        [InlineData("LINUX", "/var/lib/lintap")]
+        [InlineData("WINDOWS", @"C:\ProgramData\Wintap\data")]
+        [InlineData("OSX", "/Library/Application Support/Mactap/data")]
+        [InlineData("LINUX", "/var/log/lintap/data")]
         public void ResolveDataRoot_UsesExpectedPlatformDefault(string platformName, string expected)
         {
             OSPlatform platform = platformName == "WINDOWS"
@@ -69,11 +97,78 @@ namespace Wintap.Tests
             Assert.Equal(expected, result);
         }
 
+        [Theory]
+        [Trait("Category", "rdp-01")]
+        [InlineData("WINDOWS", @"C:\ProgramData\Wintap\data")]
+        [InlineData("OSX", "/Library/Application Support/Mactap/data")]
+        [InlineData("LINUX", "/var/log/lintap/data")]
+        public void ResolveDataRoot_UsesSplitPlatformDefault(string platformName, string expected)
+        {
+            OSPlatform platform = platformName == "WINDOWS"
+                ? OSPlatform.Windows
+                : platformName == "OSX"
+                    ? OSPlatform.OSX
+                    : OSPlatform.Linux;
+
+            string result = Env.ResolveDataRoot(null, null, platform, @"C:\ProgramData");
+
+            Assert.Equal(expected, result);
+        }
+
+        [Theory]
+        [Trait("Category", "rdp-01")]
+        [InlineData("WINDOWS", @"C:\ProgramData\Wintap\runtime")]
+        [InlineData("OSX", "/Library/Application Support/Mactap/runtime")]
+        [InlineData("LINUX", "/var/log/lintap/runtime")]
+        public void ResolveRuntimeRoot_UsesExpectedPlatformDefault(string platformName, string expected)
+        {
+            OSPlatform platform = platformName == "WINDOWS"
+                ? OSPlatform.Windows
+                : platformName == "OSX"
+                    ? OSPlatform.OSX
+                    : OSPlatform.Linux;
+
+            string result = Env.ResolveRuntimeRoot(null, null, platform, @"C:\ProgramData");
+
+            Assert.Equal(expected, result);
+        }
+
+        [Fact]
+        [Trait("Category", "rdp-01")]
+        public void SplitRoots_CanBeConfiguredToTheSameDirectory()
+        {
+            string data = Env.ResolveDataRoot(null, @"/shared", OSPlatform.Linux, @"C:\ProgramData");
+            string runtime = Env.ResolveRuntimeRoot(null, @"/shared", OSPlatform.Linux, @"C:\ProgramData");
+
+            Assert.Equal(data, runtime);
+        }
+
+        [Fact]
+        [Trait("Category", "rdp-02")]
+        public void UploaderRelativeKey_RemainsRawSensorRelativeUnderDataRoot()
+        {
+            string dataRoot = Path.Combine(Path.GetTempPath(), "wintap-data-root");
+            string localFile = Path.Combine(dataRoot, "raw_sensor", "process", "dayPK=20261015", "hourPK=12", "host+process+timestamp.parquet");
+
+            string result = Uploader.GetParquetRelativePathForFile(localFile, dataRoot);
+
+            Assert.Equal(Path.Combine("raw_sensor", "process", "dayPK=20261015", "hourPK=12", "host+process+timestamp.parquet"), result);
+        }
+
+        [Fact]
+        [Trait("Category", "rdp-02")]
+        public void EsperSerializerStaging_IsUnderRuntimeRoot()
+        {
+            Assert.Equal(Path.Combine(Env.FileRuntimeRoot, "esper_staging"), Paths.EsperStagingPath);
+            Assert.NotEqual(Path.Combine(Env.FileDataRoot, "esper_staging"), Paths.EsperStagingPath);
+        }
+
         [Fact]
         [Trait("Category", "wpc-09")]
         public void ConfigRoot_HasNoDataRootDefault()
         {
             Assert.True(string.IsNullOrEmpty(new ConfigRoot().DataRoot));
+            Assert.True(string.IsNullOrEmpty(new ConfigRoot().RuntimeRoot));
         }
 
         [Fact]
@@ -84,6 +179,7 @@ namespace Wintap.Tests
             using JsonDocument config = JsonDocument.Parse(File.ReadAllText(configPath));
 
             Assert.False(config.RootElement.TryGetProperty("DataRoot", out _));
+            Assert.False(config.RootElement.TryGetProperty("RuntimeRoot", out _));
         }
     }
 }

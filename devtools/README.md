@@ -85,7 +85,7 @@ Usage:
 
 ```bash
  uv run python devtools/process_capture_smoke_test.py \
-    --data-root /var/log/lintap \
+    --data-root /var/log/lintap/data \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -100,12 +100,12 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
     --poll-interval 10
 ```
 
-Optional: override the parquet root (defaults to `<data-root>/parquet`):
+Optional: override the parquet root (defaults to `<data-root>/raw_sensor`):
 
 ```bash
  uv run python devtools/process_capture_smoke_test.py \
-    --data-root /var/log/lintap \
-    --parquet-root /var/log/lintap/parquet
+    --data-root /var/log/lintap/data \
+    --parquet-root /var/log/lintap/data/raw_sensor
 ```
 
 Optional stricter validation requires Stop events for both processes:
@@ -134,7 +134,7 @@ Usage:
 
 ```bash
  uv run python devtools/file_capture_smoke_test.py \
-    --data-root /var/log/lintap \
+    --data-root /var/log/lintap/data \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -184,9 +184,9 @@ done
 QA summaries (DuckDB CLI):
 
 ```bash
-duckdb -json -c "SELECT COUNT(*) AS tcp_rows, COUNT(DISTINCT RemotePort) AS distinct_remote_ports FROM read_parquet('$DATA_ROOT/parquet/tcpconnectionserializer/*.parquet');"
-duckdb -json -c "SELECT COUNT(*) AS udp_rows, COUNT(DISTINCT RemotePort) AS distinct_remote_ports FROM read_parquet('$DATA_ROOT/parquet/udppacketserializer/*.parquet');"
-duckdb -json -c "SELECT COUNT(*) AS process_rows, COUNT(DISTINCT PID) AS distinct_pids, COUNT(*) FILTER (WHERE PidHash IS NULL OR PidHash='') AS missing_pid_hash_rows, COUNT(*) FILTER (WHERE ParentPid IS NOT NULL AND ParentPid>0 AND (ParentPidHash IS NULL OR ParentPidHash='')) AS missing_parent_pid_hash_rows FROM read_parquet('$DATA_ROOT/parquet/processserializer/*.parquet');"
+duckdb -json -c "SELECT COUNT(*) AS tcp_rows, COUNT(DISTINCT RemotePort) AS distinct_remote_ports FROM read_parquet('$DATA_ROOT/raw_sensor/tcpconnection/**/*.parquet');"
+duckdb -json -c "SELECT COUNT(*) AS udp_rows, COUNT(DISTINCT RemotePort) AS distinct_remote_ports FROM read_parquet('$DATA_ROOT/raw_sensor/udppacket/**/*.parquet');"
+duckdb -json -c "SELECT COUNT(*) AS process_rows, COUNT(DISTINCT PID) AS distinct_pids, COUNT(*) FILTER (WHERE PidHash IS NULL OR PidHash='') AS missing_pid_hash_rows, COUNT(*) FILTER (WHERE ParentPid IS NOT NULL AND ParentPid>0 AND (ParentPidHash IS NULL OR ParentPidHash='')) AS missing_parent_pid_hash_rows FROM read_parquet('$DATA_ROOT/raw_sensor/process/**/*.parquet');"
 ```
 
 Backlog / drop signals to check:

@@ -42,7 +42,7 @@ This milestone started as a PID attribution hardening pass for the Linux eBPF ne
 
 - Rebuilt the eBPF tracer (`network_ops_tracer.bpf.o`) and the .NET Lintap runtime several times while iterating.
 - Launched Lintap with direct parquet enabled (and selectively enabling only Network sensor during validation runs).
-- Validated network parquet output under `/var/lib/lintap/parquet/*`.
+- Validated network parquet output under `/var/log/lintap/data/raw_sensor/*`.
 
 ### Testcases used
 

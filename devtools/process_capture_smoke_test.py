@@ -11,9 +11,9 @@ Prereqs:
   - Either the Python `duckdb` package is installed or `duckdb` CLI is on PATH.
 
 Examples:
-  uv run python devtools/process_capture_smoke_test.py --data-root /var/log/lintap --timeout 180
+  uv run python devtools/process_capture_smoke_test.py --data-root /var/log/lintap/data --timeout 180
 
-  WINTAP_DATA_ROOT=/var/log/lintap \
+  WINTAP_DATA_ROOT=/var/log/lintap/data \
     uv run python devtools/process_capture_smoke_test.py --timeout 180
 """
 
@@ -78,7 +78,9 @@ def default_data_root() -> Path:
             reverse=True,
         )
         for cand in candidates:
-            parquet_root = cand / "parquet"
+            parquet_root = cand / "raw_sensor"
+            if parquet_root.exists() and any(parquet_root.rglob("*.parquet")):
+                return cand
             if parquet_root.exists() and any(parquet_root.rglob("*.parquet")):
                 return cand
     except Exception:
@@ -86,19 +88,21 @@ def default_data_root() -> Path:
 
     system = platform.system().lower()
     if system == "linux":
-        # Prefer /var/log/lintap when present; many deployments configure
-        # WINTAP_DATA_ROOT to point there (and the Lintap log will reflect it).
+        # Prefer the current split data root, while retaining discovery of
+        # legacy mixed-root deployments for historical captures.
         log_root = Path("/var/log/lintap")
-        if (log_root / "Logs" / "Lintap.log").exists() or (log_root / "parquet").exists():
-            return log_root
-        return Path("/var/lib/lintap")
+        if (log_root / "data" / "raw_sensor").exists():
+            return log_root / "data"
+        if (log_root / "runtime" / "Logs" / "Lintap.log").exists():
+            return log_root / "data"
+        return log_root / "data"
     if system == "darwin":
         return Path("/Library/Application Support/Mactap")
     if system == "windows":
         program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
         return Path(program_data) / "Wintap"
 
-    return Path("/var/lib/lintap")
+    return Path("/var/log/lintap/data")
 
 
 def sql_string(value: str) -> str:
@@ -503,7 +507,7 @@ def main() -> int:
         "--parquet-root",
         type=Path,
         default=None,
-        help="Override parquet root. Defaults to <data-root>/parquet.",
+        help="Override parquet root. Defaults to <data-root>/raw_sensor.",
     )
     parser.add_argument(
         "--start-lintap",
@@ -561,7 +565,7 @@ def main() -> int:
                         print("  " + line)
                 return 2
 
-        parquet_root = args.parquet_root or (data_root / "parquet")
+        parquet_root = args.parquet_root or (data_root / "raw_sensor")
         print(f"data root: {data_root}")
         print(f"parquet root: {parquet_root}")
 

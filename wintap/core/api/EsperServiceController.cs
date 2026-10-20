@@ -6,6 +6,7 @@
 
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared;
+using gov.llnl.wintap.core.etl.shared;
 using System;
 using System.IO;
 using System.Text;
@@ -54,7 +55,7 @@ namespace gov.llnl.wintap.core.api
             bool wintapLogOK = false;
             try
             {
-                wintapLogOK = ReadTail(Path.Combine(Env.FileDataRoot, "Logs", "Wintap.log"));
+                wintapLogOK = ReadTail(Path.Combine(Paths.LogDataPath, "Wintap.log"));
             }
             catch (Exception ex)
             {
@@ -70,7 +71,7 @@ namespace gov.llnl.wintap.core.api
             bool collectorOK = false;
             try
             {
-                collectorOK = ReadTail(Path.Combine(Env.FileDataRoot, "Logs", "WintapETL.log"));
+                collectorOK = ReadTail(Path.Combine(Paths.LogDataPath, "WintapETL.log"));
             }
             catch (Exception ex)
             {

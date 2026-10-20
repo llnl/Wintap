@@ -5,7 +5,7 @@ Query persisted BPF diag counters from parquet files using DuckDB.
 Searches the Wintap parquet directory for recent parquet files and
 queries GenericMessage entries where ProviderId='BPFDiag'.
 
-Usage: python3 devtools/query_bpfdiag_duckdb.py --data-root /var/lib/lintap --minutes 60
+Usage: python3 devtools/query_bpfdiag_duckdb.py --data-root /var/log/lintap/data --minutes 60
 """
 import argparse
 import json
@@ -16,7 +16,7 @@ import time
 
 
 def default_data_root():
-    return Path(os.environ.get("WINTAP_DATA_ROOT", "/var/lib/lintap"))
+    return Path(os.environ.get("WINTAP_DATA_ROOT", "/var/log/lintap/data"))
 
 
 def find_parquet(root: Path, minutes: int):
@@ -78,7 +78,7 @@ def main():
             print("duckdb query on CSV failed:", e)
             return 2
 
-    parquet_root = args.data_root / "parquet"
+    parquet_root = args.data_root / "raw_sensor"
     files = find_parquet(parquet_root, args.minutes)
     if not files:
         print("No recent parquet files found and no diag CSV present")

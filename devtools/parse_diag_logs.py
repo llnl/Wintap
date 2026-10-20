@@ -2,9 +2,9 @@
 """
 Parse Lintap log for NetworkSensor aggregated diag lines and emit a CSV for DuckDB.
 
-Writes: /var/lib/lintap/diag/diag_counters_from_logs.csv
+Writes: /var/log/lintap/runtime/diag/diag_counters_from_logs.csv
 
-Usage: python3 devtools/parse_diag_logs.py --log /var/lib/lintap/Logs/Lintap.log
+Usage: python3 devtools/parse_diag_logs.py --log /var/log/lintap/runtime/Logs/Lintap.log
 """
 import argparse
 import re
@@ -17,7 +17,7 @@ AGG_RE = re.compile(r"aggregated BPF diag \(STORE/HIT/MISS\) = (\d+)/(\d+)/(\d+)
 
 
 def parse(log_path: Path):
-    out_dir = Path("/var/lib/lintap/diag")
+    out_dir = Path("/var/log/lintap/runtime/diag")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_csv = out_dir / "diag_counters_from_logs.csv"
     seen_header = out_csv.exists()
@@ -45,7 +45,7 @@ def parse(log_path: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log", type=Path, default=Path("/var/lib/lintap/Logs/Lintap.log"))
+    parser.add_argument("--log", type=Path, default=Path("/var/log/lintap/runtime/Logs/Lintap.log"))
     args = parser.parse_args()
     parse(args.log)
 

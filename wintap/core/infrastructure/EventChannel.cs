@@ -11,6 +11,7 @@ using com.espertech.esper.compiler.client;
 using com.espertech.esper.runtime.client;
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.etl.load;
+using gov.llnl.wintap.core.etl.shared;
 using gov.llnl.wintap.core.infrastructure.health;
 using gov.llnl.wintap.core.infrastructure.helpers;
 using gov.llnl.wintap.core.shared;
@@ -780,7 +781,7 @@ namespace gov.llnl.wintap.core.infrastructure
             try
             {
                 var queries = new Dictionary<string, EsperQuery>();
-                string stateFile = Path.Combine(Env.FileDataRoot, "workbench-state.json");
+                string stateFile = Paths.WorkbenchStatePath;
 
                 if (File.Exists(stateFile))
                 {
@@ -812,7 +813,7 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             try
             {
-                string stateFile = Path.Combine(Env.FileDataRoot, "workbench-state.json");
+                string stateFile = Paths.WorkbenchStatePath;
                 var queryList = queries.Values.ToList();
                 string json = JsonConvert.SerializeObject(queryList, Formatting.Indented);
 

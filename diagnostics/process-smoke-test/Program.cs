@@ -50,9 +50,9 @@ internal static class Program
                     Console.WriteLine($"Lintap: http probe failed: {ex.GetType().Name}: {ex.Message}");
                 }
 
-                // For this smoke test we require Lintap to write parquet sensor output under {DataRoot}/parquet.
-                // (Some deployments further materialize into parquet/raw_sensor; this test accepts any parquet output.)
-                var parquetDir = Path.Combine(dataRoot, "parquet");
+                // For this smoke test we require Lintap to write parquet sensor output
+                // under the canonical {DataRoot}/raw_sensor tree.
+                var parquetDir = Path.Combine(dataRoot, "raw_sensor");
                 if (!WaitForParquet(parquetDir, TimeSpan.FromSeconds(30)))
                 {
                     Console.Error.WriteLine($"FAIL: Lintap did not produce any parquet files under {parquetDir} within 30s");
@@ -62,7 +62,7 @@ internal static class Program
 
                 Console.WriteLine($"Using parquet dir: {parquetDir}");
 
-                var parquetRoot = Path.Combine(dataRoot, "parquet");
+                var parquetRoot = Path.Combine(dataRoot, "raw_sensor");
                 var rows = PollProcessRowsFromParquet(parquetRoot, bashPid, sleepPid, lintapStartUtc, TimeSpan.FromSeconds(45));
                 StopLintap(lintap);
 
