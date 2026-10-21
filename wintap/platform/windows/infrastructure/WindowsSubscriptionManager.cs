@@ -136,10 +136,16 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
                 WintapLogger.Log.Append("Creating Kernel event listening thread (ETW)...", LogLevel.Info);
                 try
                 {
-                    BackgroundWorker etwKernelModeListeningThread = new BackgroundWorker();
-                    etwKernelModeListeningThread.WorkerSupportsCancellation = true;
-                    etwKernelModeListeningThread.DoWork += new DoWorkEventHandler(etwKernelModeListeningThread_DoWork);
-                    etwKernelModeListeningThread.RunWorkerAsync();
+                    // Process() blocks for the lifetime of the ETW session. A
+                    // thread-pool worker can remain queued past the readiness
+                    // deadline while serializers and loggers occupy pool threads.
+                    var kernelConsumerThread = new System.Threading.Thread(
+                        () => etwKernelModeListeningThread_DoWork(null, null))
+                    {
+                        IsBackground = true,
+                        Name = "Wintap kernel ETW consumer"
+                    };
+                    kernelConsumerThread.Start();
                 }
                 catch (Exception ex)
                 {

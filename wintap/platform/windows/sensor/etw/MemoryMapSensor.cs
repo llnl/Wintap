@@ -220,19 +220,14 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             scanInProgress = false;
 
             // clean up history
-            foreach (CommitInfo historicalCommitInfo in commitHistory.Values)
-            {
-                // clean up history - remove entries for dead processes
-                var deadProcessKeys = commitHistory
-                    .Where(kvp => !processRunning(kvp.Value.ProcessId))
-                    .Select(kvp => kvp.Key)
-                    .ToList();
-
-                foreach (var key in deadProcessKeys)
-                {
-                    commitHistory.Remove(key);
-                }
-            }
+            // Materialize keys before removal; mutating Values during enumeration
+            // aborted sweeps as soon as a historical process had exited.
+            var deadProcessKeys = commitHistory
+                .Where(kvp => !processRunning(kvp.Value.ProcessId))
+                .Select(kvp => kvp.Key)
+                .ToList();
+            foreach (var key in deadProcessKeys)
+                commitHistory.Remove(key);
             return scanCount;
         }
 

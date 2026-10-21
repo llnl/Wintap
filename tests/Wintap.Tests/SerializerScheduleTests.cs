@@ -7,6 +7,26 @@ namespace Wintap.Tests
 {
     public class SerializerScheduleTests
     {
+        [Theory]
+        [InlineData(10000, 5000)]
+        [InlineData(1000, 500)]
+        public void MemorySnapshotsDrainBeforeQueueCapacity(int capacity, int threshold)
+        {
+            var config = new ETLConfig { SerializationIntervalSec = 60 };
+            var options = SerializerSchedule.ResolveOptions(config, "defaultserializer", capacity);
+            Assert.True(options.UseDedicatedWorker);
+            Assert.Equal(capacity, options.MaxQueueEvents);
+            Assert.Equal(threshold, options.HighWaterEvents);
+            Assert.Equal(60, options.IntervalSec);
+
+            config.Serializers["defaultserializer"] = new ETLConfig.SerializerOptions {
+                UseDedicatedWorker = false, HighWaterEvents = 0
+            };
+            options = SerializerSchedule.ResolveOptions(config, "defaultserializer", capacity);
+            Assert.False(options.UseDedicatedWorker);
+            Assert.Equal(0, options.HighWaterEvents);
+        }
+
         [Fact]
         public void AnySerializerCanSelectWorkerAndBoundedSchedule()
         {

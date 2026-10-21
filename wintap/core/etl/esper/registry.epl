@@ -16,5 +16,5 @@
   'Registry' as MessageType,
   AgentId
 from WintapMessage(CAST(messageType, string) = 'Registry').win:time_batch(10 sec) as msg
-group by registry.path, registry.dataType, registry.valueName, registry.data, registry.previousData, registry.previousDataType, PidHash, PID, activityType, ProcessName, AgentId
+group by registry.path, registry.dataType, registry.valueName, registry.data, registry.previousData, registry.previousDataType, PidHash, PID, CAST(ActivityType, string), ProcessName, AgentId
 having count(*) > 0

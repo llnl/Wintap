@@ -77,7 +77,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             msg.EventLogEvent.EventId = entry.Id;
             msg.EventLogEvent.EventMessage = ConvertXmlToJson(entry.ToXml());
             msg.EventLogEvent.LogName = entry.LogName;
-            msg.EventLogEvent.LogSource = entry.LogName;
+            msg.EventLogEvent.LogSource = entry.ProviderName;
             EventChannel.Send(msg);
         }
 

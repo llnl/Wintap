@@ -12,6 +12,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 foreach (var entry in config.Serializers)
                     if (string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)) custom = entry.Value;
             bool registry = name == "registryserializer", file = name == "fileserializer";
+            bool snapshot = name == "defaultserializer";
             int capacity = ResolveQueueCapacity(custom?.MaxQueueEvents,
                 registry ? ResolveQueueCapacity(config.RegistrySerializationMaxQueueEvents, inheritedCapacity) : inheritedCapacity);
             capacity = ResolveQueueCapacity(capacityOverride, capacity);
@@ -20,10 +21,12 @@ namespace gov.llnl.wintap.core.etl.extract
             if (custom?.IntervalSec != null)
                 interval = custom.IntervalSec > 0 ? custom.IntervalSec.Value : (config.SerializationIntervalSec > 0 ? config.SerializationIntervalSec : 60);
             int highWater = custom?.HighWaterEvents ?? (registry ? config.RegistrySerializationHighWaterEvents ?? 5000
-                : file ? config.FileSerializationHighWaterEvents ?? 5000 : 0);
+                : file ? config.FileSerializationHighWaterEvents ?? 5000 : snapshot ? 5000 : 0);
             return new ETLConfig.SerializerOptions
             {
-                UseDedicatedWorker = custom?.UseDedicatedWorker ?? registry,
+                // Memory-map snapshots arrive in bursts. Drain before the bounded
+                // queue fills, independently of the shared thread pool and timer.
+                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || snapshot),
                 IntervalSec = interval,
                 MaxQueueEvents = capacity,
                 HighWaterEvents = ResolveHighWaterEvents(highWater, capacity)
