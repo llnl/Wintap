@@ -26,11 +26,10 @@ namespace Wintap.Tests
         public void ResolvesExactOwnerWithoutMutatingMessage(MessageType type, bool windows, int outcome)
         {
             var message = Message(type);
-            // File and SELinux events may carry a complete producer-side identity.
+            // Linux file/network callbacks and SELinux events may carry a complete producer-side identity.
             if (!CanUsePrepopulatedIdentity(type)) { message.PidHash = "prepopulated"; message.ProcessName = "prepopulated"; }
             string before = JsonSerializer.Serialize(message);
             var owner = new ProcessRecord { ProcessId = 42, PidHash = "resolved", ProcessName = "owner", CreateTime = Time.AddSeconds(-1) };
-            bool cached = windows || type == MessageType.File;
             var resolver = new RecordingResolver
             {
                 Current = outcome == 0 ? owner : null,
@@ -40,7 +39,7 @@ namespace Wintap.Tests
             ProcessRecord result = EventOwnerSelection.ResolveOwner(resolver, message, Time, windows, out bool? signal);
             Assert.Same(outcome == 2 ? null : owner, result);
             Assert.Equal(type == MessageType.File ? (bool?)(outcome == 0) : null, signal);
-            Assert.Equal(cached ? (outcome == 0 ? new[] { "current" } : new[] { "current", "identity" }) : new[] { "durable" },
+            Assert.Equal(outcome == 0 ? new[] { "current" } : new[] { "current", "identity" },
                 resolver.Calls.Select(c => c.Method).ToArray());
             Assert.All(resolver.Calls, call => { Assert.Equal(42, call.Pid); Assert.Equal(Time, call.Time); Assert.Equal(DateTimeKind.Utc, call.Time.Kind); });
             Assert.Equal(before, JsonSerializer.Serialize(message));
@@ -48,7 +47,7 @@ namespace Wintap.Tests
 
         public static IEnumerable<object[]> PrepopulatedIdentityTypes()
         {
-            foreach (MessageType type in new[] { MessageType.File, MessageType.SELinuxAvc, MessageType.SELinuxTransition, MessageType.SELinuxInteraction })
+            foreach (MessageType type in new[] { MessageType.File, MessageType.TcpConnection, MessageType.UdpPacket, MessageType.SELinuxAvc, MessageType.SELinuxTransition, MessageType.SELinuxInteraction })
                 foreach (bool windows in new[] { true, false })
                     foreach (string hash in new[] { null, "", " ", "hash" })
                         foreach (string name in new[] { null, "", "\t", "name" })
@@ -78,9 +77,7 @@ namespace Wintap.Tests
             {
                 Assert.Null(owner);
                 Assert.Equal(type == MessageType.File ? (bool?)false : null, signal);
-                Assert.Equal(windows || type == MessageType.File
-                        ? new[] { "current", "identity" }
-                        : new[] { "durable" },
+                Assert.Equal(new[] { "current", "identity" },
                     resolver.Calls.Select(c => c.Method).ToArray());
             }
             Assert.Equal(before, JsonSerializer.Serialize(message));
@@ -118,6 +115,8 @@ namespace Wintap.Tests
 
         private static bool CanUsePrepopulatedIdentity(MessageType type) =>
             type == MessageType.File ||
+            type == MessageType.TcpConnection ||
+            type == MessageType.UdpPacket ||
             type == MessageType.SELinuxAvc ||
             type == MessageType.SELinuxTransition ||
             type == MessageType.SELinuxInteraction;

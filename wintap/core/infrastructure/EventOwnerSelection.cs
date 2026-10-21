@@ -27,7 +27,13 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             fileCacheHit = null;
             bool isFile = message.MessageType == WintapMessage.MessageTypeEnum.File;
+            // Linux eBPF callbacks can synchronously stamp an identity from the
+            // active cache or live /proc before their short-lived owner exits.
+            // File and network events use that narrow producer-side path; do not
+            // treat arbitrary identities on other event families as authoritative.
             bool canUsePrepopulatedIdentity = isFile ||
+                message.MessageType == WintapMessage.MessageTypeEnum.TcpConnection ||
+                message.MessageType == WintapMessage.MessageTypeEnum.UdpPacket ||
                 message.MessageType == WintapMessage.MessageTypeEnum.SELinuxAvc ||
                 message.MessageType == WintapMessage.MessageTypeEnum.SELinuxTransition ||
                 message.MessageType == WintapMessage.MessageTypeEnum.SELinuxInteraction;
@@ -43,18 +49,20 @@ namespace gov.llnl.wintap.core.infrastructure
                 };
             }
 
-            if (isWindows || isFile)
-            {
-                bool hit = resolver.TryResolveCurrentProcessAtTime(message.PID, eventTimeUtc, out ProcessRecord owner);
-                if (isFile) fileCacheHit = hit;
-                if (hit) return owner;
-                owner = resolver.ResolveProcessIdentityAtTime(message.PID, eventTimeUtc);
-                if (owner == null && isWindows && IsRegistryTeardownWrite(message))
-                    owner = resolver.ResolveRegistryTeardownProcess(message.PID, eventTimeUtc);
-                return owner;
-            }
+            // Prefer the active cache on every platform/event family. On Linux,
+            // eBPF file and network callbacks may immediately follow a Clone or
+            // Execve lifecycle event.  The active cache is updated synchronously
+            // when that lifecycle event is registered, while a durable lookup can
+            // miss transiently and turn an otherwise known network event into an
+            // Unknown identity.
+            bool hit = resolver.TryResolveCurrentProcessAtTime(message.PID, eventTimeUtc, out ProcessRecord owner);
+            if (isFile) fileCacheHit = hit;
+            if (hit) return owner;
 
-            return resolver.ResolveProcessAtTime(message.PID, eventTimeUtc);
+            owner = resolver.ResolveProcessIdentityAtTime(message.PID, eventTimeUtc);
+            if (owner == null && isWindows && IsRegistryTeardownWrite(message))
+                owner = resolver.ResolveRegistryTeardownProcess(message.PID, eventTimeUtc);
+            return owner;
         }
     }
 }

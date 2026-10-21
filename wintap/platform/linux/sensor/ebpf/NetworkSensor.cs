@@ -271,8 +271,12 @@ namespace gov.llnl.wintap.platform.linux.collect
                 message.ActivityType = activityType;
                 message.ActivityId = "";
                 message.CorrelationId = "";
-                message.PidHash = _pidHashGenerator?.GenPidHash(pid, message.EventTime) ?? "";
+                // A PID plus callback time is not a process identity. Stamp a
+                // stable cache-/proc-derived identity while the owner is live;
+                // otherwise leave this empty for the bounded resolver retry.
+                message.PidHash = "";
                 message.ProcessName = evt.GetComm() ?? "unknown";
+                EventChannel.TryPopulateCurrentProcessIdentity(message);
 
                 // Convert network byte order IP to string
                 string sourceIp = ConvertIpToString(evt.Saddr);

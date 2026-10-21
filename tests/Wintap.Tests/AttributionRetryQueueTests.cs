@@ -24,7 +24,7 @@ namespace Wintap.Tests
             queue.Shutdown(); Assert.Single(calls);
         }
         [Fact]
-        public void PermanentMissGetsOnlyThreeRetriesAndOneFinalEmission()
+        public void PermanentMissGetsTenRetriesAndOneFinalEmission()
         {
             long now = 0; int attempts = 0, emitted = 0;
             AttributionRetryQueue queue = null;
@@ -32,8 +32,8 @@ namespace Wintap.Tests
                 attempts++; if (!queue.TrySchedule(m, n)) emitted++;
             }, clock: () => now, startTimer: false);
             Assert.True(queue.TrySchedule(Message(), 0));
-            for (int i = 1; i <= 5; i++) { now = i * 1000; queue.Pump(); }
-            Assert.Equal(3, attempts); Assert.Equal(1, emitted); queue.Shutdown();
+            for (int i = 1; i <= 12; i++) { now = i * 1000; queue.Pump(); }
+            Assert.Equal(10, attempts); Assert.Equal(1, emitted); queue.Shutdown();
         }
         [Fact]
         public void CapacityFailureIsExplicitAndShutdownForcesFinalAttempts()
@@ -42,7 +42,7 @@ namespace Wintap.Tests
             var queue = new AttributionRetryQueue((m, n) => attempts.Add(n), capacity: 2, startTimer: false);
             Assert.True(queue.TrySchedule(Message(), 0)); Assert.True(queue.TrySchedule(Message(), 0));
             Assert.False(queue.TrySchedule(Message(), 0));
-            queue.Shutdown(); Assert.Equal(new[] { 3, 3 }, attempts);
+            queue.Shutdown(); Assert.Equal(new[] { 10, 10 }, attempts);
             Assert.False(queue.TrySchedule(Message(), 0)); queue.Pump(); queue.Shutdown(); Assert.Equal(2, attempts.Count);
         }
         [Fact]
@@ -103,11 +103,14 @@ namespace Wintap.Tests
         }
 
         [Fact]
-        public void DefaultSelectionRemainsRegistryOnly()
+        public void DefaultSelectionIncludesLifecycleDependentStreams()
         {
             var queue = new AttributionRetryQueue((_, _) => throw new Exception(), startTimer: false);
             var message = Message(); message.MessageType = WintapMessage.MessageTypeEnum.File;
-            Assert.False(queue.TrySchedule(message, 0)); Assert.False(queue.TrySchedule(null, 0)); queue.Shutdown();
+            Assert.True(queue.TrySchedule(message, 0));
+            Assert.True(queue.TrySchedule(new WintapMessage(DateTime.UtcNow, 42, WintapMessage.MessageTypeEnum.TcpConnection), 0));
+            Assert.True(queue.TrySchedule(new WintapMessage(DateTime.UtcNow, 42, WintapMessage.MessageTypeEnum.UdpPacket), 0));
+            Assert.False(queue.TrySchedule(null, 0)); queue.Shutdown();
         }
     }
 }

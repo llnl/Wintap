@@ -341,7 +341,7 @@ namespace gov.llnl.wintap.core.infrastructure
                                 Interlocked.Increment(ref _fileProcessCacheMisses);
                         }
 
-                        if (ownerProcess == null && OperatingSystem.IsWindows() &&
+                        if (ownerProcess == null &&
                             attributionRetries.Value.TrySchedule(streamedEvent, attributionRetryAttempt))
                         {
                             // Do not inspect health, generate an unknown identity, or send to
@@ -537,7 +537,9 @@ namespace gov.llnl.wintap.core.infrastructure
                 return false;
             }
 
-            if (streamedEvent.MessageType != WintapMessage.MessageTypeEnum.File)
+            if (streamedEvent.MessageType != WintapMessage.MessageTypeEnum.File &&
+                streamedEvent.MessageType != WintapMessage.MessageTypeEnum.TcpConnection &&
+                streamedEvent.MessageType != WintapMessage.MessageTypeEnum.UdpPacket)
             {
                 return false;
             }
@@ -550,8 +552,29 @@ namespace gov.llnl.wintap.core.infrastructure
             {
                 streamedEvent.PidHash = ownerProcess.PidHash;
                 streamedEvent.ProcessName = ownerProcess.ProcessName;
-                Interlocked.Increment(ref _fileProcessCacheHits);
+                if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.File)
+                {
+                    Interlocked.Increment(ref _fileProcessCacheHits);
+                }
                 return true;
+            }
+
+            // A lifecycle callback can lag its file/network callback. While the
+            // producer is still alive, GetPidHash can derive the same stable hash
+            // from /proc start time; waiting for retry instead loses this source
+            // when a rapid child exits. Keep the BPF comm as the name only when
+            // it is usable, so unknown producer data still follows normal retry.
+            if (!string.IsNullOrWhiteSpace(streamedEvent.ProcessName) &&
+                !streamedEvent.ProcessName.StartsWith("unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                string pidHash = _processResolver.GetPidHash(
+                    streamedEvent.PID,
+                    DateTime.FromFileTimeUtc(streamedEvent.EventTime));
+                if (!string.IsNullOrWhiteSpace(pidHash))
+                {
+                    streamedEvent.PidHash = pidHash;
+                    return true;
+                }
             }
 
             return false;

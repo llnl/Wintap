@@ -52,7 +52,10 @@ namespace gov.llnl.wintap.core.etl.extract
                 flatMsg.LastSeen = (long)sensorEvent["lastSeen"];
                 flatMsg.PidHash = pidHash;
                 flatMsg.PID = Int32.Parse(sensorEvent["PID"].ToString());
-                flatMsg.Hostname = Environment.MachineName.ToLower();
+                // Keep file rows in the same hostname namespace as process and
+                // network serializers.  Lower-casing only this event family
+                // makes host-scoped downstream joins silently diverge on Linux.
+                flatMsg.Hostname = HostSerializer.Instance.HostId.Hostname;
                 flatMsg.File_Path = SelectPath(sensorEvent["path"].ToString(), System.OperatingSystem.IsWindows());
                 flatMsg.File_Hash = idGen.GenKeyForFile(transform.Transformer.context, HostSerializer.Instance.HostId.Hostname, flatMsg.AgentId, flatMsg.File_Path);
                 flatMsg.MessageType = "PROCESS_FILE";

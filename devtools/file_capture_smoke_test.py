@@ -27,6 +27,7 @@ import json
 import math
 import os
 import platform
+import re
 import signal
 import subprocess
 import time
@@ -263,11 +264,45 @@ def validate(rows: list[dict]) -> tuple[bool, str]:
     return True, "ok"
 
 
-def serializer_drops_since(log_path: Path, start_offset: int) -> list[str]:
+def serializer_drop_total(log_path: Path) -> int:
+    """Return the most recent FileSerializer ``dropped_total`` counter."""
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
+            latest = 0
+            for line in log_file:
+                if "fileserializer:" not in line.lower():
+                    continue
+                match = re.search(r"\bdropped_total=(\d+)\b", line.lower())
+                if match:
+                    latest = int(match.group(1))
+            return latest
+    except OSError:
+        return 0
+
+
+def serializer_drops_since(log_path: Path, start_offset: int, baseline_drop_total: int) -> list[str]:
+    """Return FileSerializer drop evidence written after ``start_offset``.
+
+    Older serializers emitted a prose backlog-limit warning. Current serializers
+    report a monotonic ``dropped_total`` counter with each flush, so accept both
+    forms. The counter is compared with its value before the stimulus so prior
+    test-run loss does not create a false failure.
+    """
     try:
         with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
             log_file.seek(start_offset)
-            return [line.rstrip() for line in log_file if "fileserializer: in-memory backlog limit reached" in line]
+            drops: list[str] = []
+            for line in log_file:
+                normalized = line.lower()
+                if "fileserializer:" not in normalized:
+                    continue
+                if "in-memory backlog limit reached" in normalized:
+                    drops.append(line.rstrip())
+                    continue
+                match = re.search(r"\bdropped_total=(\d+)\b", normalized)
+                if match and int(match.group(1)) > baseline_drop_total:
+                    drops.append(line.rstrip())
+            return drops
     except OSError as exc:
         return [f"could not read {log_path}: {exc}"]
 
@@ -444,9 +479,11 @@ def main() -> int:
         runtime_root = Path(os.environ.get("WINTAP_RUNTIME_ROOT", str(data_root.parent / "runtime")))
         log_path = args.log_file or (runtime_root / "Logs" / "Lintap.log")
         log_start_offset = 0
+        baseline_drop_total = 0
         if args.require_no_serializer_drops:
             try:
                 log_start_offset = log_path.stat().st_size
+                baseline_drop_total = serializer_drop_total(log_path)
             except OSError as exc:
                 print(f"FAIL: cannot mark serializer log start: {exc}")
                 return 2
@@ -489,7 +526,7 @@ def main() -> int:
                     if args.serializer_observation_seconds > 0:
                         print(f"observing serializer log for {args.serializer_observation_seconds}s")
                         time.sleep(args.serializer_observation_seconds)
-                    drops = serializer_drops_since(log_path, log_start_offset)
+                    drops = serializer_drops_since(log_path, log_start_offset, baseline_drop_total)
                     if drops:
                         print("FAIL: FileSerializer dropped events after smoke start")
                         for line in drops[:10]:

@@ -147,8 +147,15 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 string processName = ProcessSensorHelper.ExtractProcessName(executablePath, evt.GetParentComm());
 
-                // Use child process start time for stable PidHash.
-                DateTime startUtc = childProcData.StartTimeUtc != default ? childProcData.StartTimeUtc.ToUniversalTime() : DateTime.UtcNow;
+                // Use the child start time for a stable PidHash. For a very
+                // short-lived child /proc may be gone by callback time; retain
+                // the kernel fork timestamp rather than assigning callback
+                // time, which would make earlier file/network events appear to
+                // predate their process identity.
+                DateTime startUtc = childProcData.StartTimeUtc != default
+                    ? childProcData.StartTimeUtc.ToUniversalTime()
+                    : (ProcReader.TryConvertBootNsToUtc(evt.TimestampNs) ?? DateTime.UtcNow);
+                startUtc = ProcReader.NormalizeStartTimeUtc(startUtc);
 
                 var message = new WintapMessage(
                     startUtc,

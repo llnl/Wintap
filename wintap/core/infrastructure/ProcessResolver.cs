@@ -1201,13 +1201,29 @@ namespace gov.llnl.wintap.core.infrastructure
 
                 DateTime bootUtc = GetLinuxBootTimeUtc();
                 long hz = GetLinuxClockTicksPerSecond();
-                var procStartUtc = bootUtc + TimeSpan.FromSeconds((double)startTicks / hz);
+                var procStartUtc = ConvertLinuxProcStartTicksToUtc(bootUtc, startTicks, hz);
                 return procStartUtc.ToFileTimeUtc();
             }
             catch
             {
                 return null;
             }
+        }
+
+        internal static DateTime ConvertLinuxProcStartTicksToUtc(
+            DateTime bootTimeUtc,
+            long processStartTicks,
+            long clockTicksPerSecond)
+        {
+            if (processStartTicks < 0 || clockTicksPerSecond <= 0)
+                throw new ArgumentOutOfRangeException();
+
+            // Keep this integer-only. TimeSpan.FromSeconds(double) can land one
+            // 100-ns DateTime tick below the /proc/ProcReader value and produce
+            // a different PID hash for the same Linux process execution.
+            long elapsedDateTimeTicks = checked(
+                processStartTicks * TimeSpan.TicksPerSecond / clockTicksPerSecond);
+            return bootTimeUtc.ToUniversalTime().AddTicks(elapsedDateTimeTicks);
         }
 
         internal static long? TryGetWindowsProcStartFileTimeUtc(int pid)

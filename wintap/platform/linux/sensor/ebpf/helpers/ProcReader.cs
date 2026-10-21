@@ -69,6 +69,74 @@ namespace gov.llnl.wintap.platform.linux.collect
         }
 
         /// <summary>
+        /// Converts a kernel monotonic/boot timestamp captured by an eBPF
+        /// lifecycle tracepoint to UTC. This is the fallback identity time when
+        /// the child has already exited and /proc is no longer available.
+        /// </summary>
+        internal static DateTime? TryConvertBootNsToUtc(ulong bootNs)
+        {
+            if (bootNs == 0) return null;
+            try
+            {
+                // /proc/<pid>/stat stores a start time in clock ticks, not
+                // nanoseconds. Quantize the eBPF timestamp to that same basis
+                // before hashing so Clone, Execve, and ProcessRundown describe
+                // one process identity rather than adjacent identities for a
+                // single PID.
+                long ticksPerSecond = GetClockTicksPerSecond();
+                ulong startTicks = checked((bootNs * (ulong)ticksPerSecond) / 1_000_000_000UL);
+                DateTime startUtc = GetBootTimeUtc().AddTicks(
+                    checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond)));
+                return NormalizeStartTimeUtc(startUtc);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Canonicalize Linux process start times to the nearest /proc clock
+        /// tick. Lifecycle sources can otherwise differ by one DateTime tick
+        /// (100 ns) at a clock-tick boundary and generate different PID hashes
+        /// for Clone, Execve, and rundown records describing one execution.
+        /// </summary>
+        internal static DateTime NormalizeStartTimeUtc(DateTime startTimeUtc)
+        {
+            return NormalizeStartTimeUtc(startTimeUtc, GetBootTimeUtc(), GetClockTicksPerSecond());
+        }
+
+        internal static DateTime NormalizeStartTimeUtc(
+            DateTime startTimeUtc,
+            DateTime bootTimeUtc,
+            long clockTicksPerSecond)
+        {
+            DateTime utc = startTimeUtc.ToUniversalTime();
+            DateTime bootUtc = bootTimeUtc.ToUniversalTime();
+            if (clockTicksPerSecond <= 0 || utc < bootUtc)
+            {
+                return utc;
+            }
+
+            try
+            {
+                ulong elapsedDateTimeTicks = checked((ulong)(utc - bootUtc).Ticks);
+                ulong clockTicks = checked(
+                    (elapsedDateTimeTicks * (ulong)clockTicksPerSecond +
+                     (ulong)TimeSpan.TicksPerSecond / 2UL) /
+                    (ulong)TimeSpan.TicksPerSecond);
+                long canonicalDateTimeTicks = checked((long)(
+                    clockTicks * (ulong)TimeSpan.TicksPerSecond /
+                    (ulong)clockTicksPerSecond));
+                return bootUtc.AddTicks(canonicalDateTimeTicks);
+            }
+            catch
+            {
+                return utc;
+            }
+        }
+
+        /// <summary>
         /// Enumerate live processes from /proc. Processes can exit while being read;
         /// those entries are skipped if their /proc directory disappears before basic
         /// metadata can be collected.
@@ -209,7 +277,11 @@ namespace gov.llnl.wintap.platform.linux.collect
             {
                 DateTime bootTimeUtc = GetBootTimeUtc();
                 long ticksPerSecond = GetClockTicksPerSecond();
-                info.StartTimeUtc = bootTimeUtc.AddSeconds(startTicks / (double)ticksPerSecond);
+                info.StartTimeUtc = NormalizeStartTimeUtc(
+                    bootTimeUtc.AddTicks(
+                        checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond))),
+                    bootTimeUtc,
+                    ticksPerSecond);
             }
         }
 

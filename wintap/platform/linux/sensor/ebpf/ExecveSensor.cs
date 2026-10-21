@@ -176,7 +176,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // ProcessRundown/ProcReader-derived PidHash values.
                 long ticksPerSecond = GetClockTicksPerSecond();
                 ulong startTicks = (startNs * (ulong)ticksPerSecond) / 1_000_000_000UL;
-                var startUtc = bootUtc.Value + TimeSpan.FromSeconds(startTicks / (double)ticksPerSecond);
+                var startUtc = bootUtc.Value.AddTicks(
+                    checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond)));
                 return startUtc.UtcDateTime.ToFileTimeUtc();
             }
             catch
@@ -229,6 +230,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     : evt.StartTime != 0 && TryConvertBootNsToFileTimeUtc(evt.StartTime) is long startFileTimeUtc
                         ? DateTime.FromFileTimeUtc(startFileTimeUtc)
                         : DateTime.UtcNow;
+                startUtc = ProcReader.NormalizeStartTimeUtc(startUtc);
 
                 var message = new WintapMessage(startUtc, (int)evt.Pid, WintapMessage.MessageTypeEnum.Process);
                 message.ActivityType = WintapMessage.ActivityTypeEnum.Start;
