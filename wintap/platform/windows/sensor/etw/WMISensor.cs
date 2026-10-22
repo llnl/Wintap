@@ -13,7 +13,6 @@ using System.Runtime.Remoting;
 using System.Diagnostics;
 using com.espertech.esper.compat;
 using Microsoft.Diagnostics.Tracing.StackSources;
-using XLR8.CGLib;
 using gov.llnl.wintap.platform.windows.collect.shared;
 
 namespace gov.llnl.wintap.platform.windows.collect.etw

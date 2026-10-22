@@ -27,8 +27,6 @@
     <EmbeddedResource Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
     <None Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
     <Compile Remove="core\shared\SingleLogit.cs" />
-    <!-- 2026-10-22: packet capture removed from the product -->
-    <Compile Remove="core\sensor\PcapCollector.cs" />
   </ItemGroup>
 
   <!-- ===== Platform exclusions (unchanged) ===== -->
