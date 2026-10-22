@@ -55,7 +55,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // /proc/<pid>/exe for executable path
                 ReadExe(procDir, ref info);
 
-                if (string.IsNullOrWhiteSpace(info.Username) && info.Uid > 0)
+                if (string.IsNullOrWhiteSpace(info.Username) && info.HasUid)
                 {
                     info.Username = LookupUsername(info.Uid);
                 }
@@ -241,7 +241,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                 {
                     var parts = line.Split(new[] { ':', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2 && uint.TryParse(parts[1], out uint uid))
+                    {
                         info.Uid = uid;
+                        info.HasUid = true;
+                    }
                 }
                 else if (line.StartsWith("Gid:"))
                 {
@@ -456,7 +459,13 @@ namespace gov.llnl.wintap.platform.linux.collect
             return cachedClockTicksPerSecond.Value;
         }
 
-        private static string LookupUsername(uint uid)
+        /// <summary>
+        /// Resolves a Linux UID using the local passwd file. eBPF lifecycle
+        /// records carry an effective UID even when the process exits before a
+        /// userspace /proc read can complete, so sensors use this as their
+        /// identity fallback.
+        /// </summary>
+        internal static string LookupUsername(uint uid)
         {
             lock (passwdLock)
             {
@@ -490,6 +499,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             public int PPid;
             public int SessionId;
             public uint Uid;
+            public bool HasUid;
             public uint Gid;
             public string Name;
             public DateTime StartTimeUtc;

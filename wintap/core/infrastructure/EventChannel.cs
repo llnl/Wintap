@@ -593,6 +593,17 @@ namespace gov.llnl.wintap.core.infrastructure
             return _processResolver.ResolveProcessAtTime(_pid, _eventTime.ToUniversalTime());
         }
 
+        /// <summary>
+        /// Gets a stable identity for a process that may not have completed
+        /// lifecycle registration yet. On Linux the resolver can derive the
+        /// hash from a live /proc start time, avoiding exit-time hashes for
+        /// short-lived processes.
+        /// </summary>
+        internal static string GetStablePidHash(int pid, DateTime eventTime)
+        {
+            return _processResolver?.GetPidHash(pid, eventTime.ToUniversalTime());
+        }
+
         public static void ClearProcessDB()
         {
             _processResolver.ClearDB();

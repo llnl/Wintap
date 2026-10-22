@@ -235,13 +235,17 @@ namespace gov.llnl.wintap.platform.linux.collect
                 var message = new WintapMessage(startUtc, (int)evt.Pid, WintapMessage.MessageTypeEnum.Process);
                 message.ActivityType = WintapMessage.ActivityTypeEnum.Start;
 
+                string userName = !string.IsNullOrWhiteSpace(procData.Username)
+                    ? procData.Username
+                    : ProcReader.LookupUsername(evt.Uid);
+
                 message.Process = ProcessSensorHelper.CreateProcessObject(
                     pid: (int)evt.Pid,
                     ppid: parentPid,
                     name: processName,
                     path: executablePath,
                     commandLine: rawCmdline ?? "",
-                    user: procData.Username ?? "unknown-3",
+                    user: userName,
                     arguments: !string.IsNullOrEmpty(procData.Home) 
                         ? $"HOME={procData.Home} SHELL={procData.Shell}" 
                         : null

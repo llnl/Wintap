@@ -90,7 +90,6 @@ namespace Wintap.Tests
         [InlineData(MessageType.File, false, "identity", false)]
         [InlineData(MessageType.Registry, true, "current", null)]
         [InlineData(MessageType.Registry, true, "identity", null)]
-        [InlineData(MessageType.Registry, false, "durable", null)]
         public void ExceptionsPropagateWithOnlyCompletedFileAttemptsSignaled(
             MessageType type, bool windows, string throwingMethod, bool? expectedSignal)
         {

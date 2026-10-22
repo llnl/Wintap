@@ -165,6 +165,12 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 message.ActivityType = WintapMessage.ActivityTypeEnum.Start;
 
+                string userName = !string.IsNullOrWhiteSpace(childProcData.Username)
+                    ? childProcData.Username
+                    : !string.IsNullOrWhiteSpace(parentProcData.Username)
+                        ? parentProcData.Username
+                        : ProcReader.LookupUsername(evt.ParentUid);
+
                 message.Process = ProcessSensorHelper.CreateProcessObject(
                     pid: (int)evt.ChildPid,
                     ppid: (int)evt.ParentPid,
@@ -173,7 +179,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     commandLine: childProcData.CommandLine != "" 
                                  ? childProcData.CommandLine 
                                  : (parentProcData.CommandLine ?? ""),
-                    user: parentProcData.Username ?? "unknown"
+                    user: userName
                 );
 
                 message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, message.EventTime) ?? "";

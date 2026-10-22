@@ -19,12 +19,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\shared\WintapAPI\WintapAPI.csproj" />
     <!-- Linux platform sources are excluded from Wintap.csproj; compile the
-         dependency-free aggregator directly so its unit tests can run. -->
+         dependency-free helpers directly so their unit tests can run. -->
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsAggregator.cs" Link="FileOpsAggregator.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\DirIdentityIndex.cs" Link="DirIdentityIndex.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsDenyPolicy.cs" Link="FileOpsDenyPolicy.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxPermissionDecoder.cs" Link="SELinuxPermissionDecoder.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxSidResolver.cs" Link="SELinuxSidResolver.cs" />
+    <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\helpers\ProcReader.cs" Link="ProcReader.cs" />
     <ProjectReference Include="..\..\wintap\Wintap.csproj" />
   </ItemGroup>
 

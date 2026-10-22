@@ -30,5 +30,13 @@ namespace Wintap.Tests
             Assert.NotEqual(first, second);
             Assert.Equal(TimeSpan.FromMilliseconds(10), second - first);
         }
+
+        [Fact]
+        public void RootUidResolvesFromTheLocalPasswdDatabase()
+        {
+            string userName = ProcReader.LookupUsername(0);
+
+            Assert.Equal("root", userName);
+        }
     }
 }
