@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Lawrence Livermore National Security, LLC.
  * Produced at the Lawrence Livermore National Laboratory.
  * All rights reserved.
@@ -8,20 +8,34 @@
 #pragma warning disable SKEXP0010, SKEXP0001, SKEXP0050, SKEXP0020, SKEXP0070;
 
 using gov.llnl.wintap;
+#if !WINTAP_CORE
 using gov.llnl.wintap.core.api;
+#endif
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.etl.load;
 using gov.llnl.wintap.core.shared;
 using EtlPaths = gov.llnl.wintap.core.etl.shared.Paths;
 using gov.llnl.wintap.Properties;
+#if !WINTAP_CORE
 using Microsoft.AspNetCore.Builder;
+#endif
+#if !WINTAP_CORE
 using Microsoft.AspNetCore.Hosting;
+#endif
+#if !WINTAP_CORE
 using Microsoft.Extensions.AI;
+#endif
 using Microsoft.Extensions.DependencyInjection;
+#if !WINTAP_CORE
 using ModelContextProtocol.Client;
+#endif
+#if !WINTAP_CORE
 using OpenAI;
+#endif
 using System;
+#if !WINTAP_CORE
 using System.ClientModel;
+#endif
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -59,7 +73,11 @@ if (string.Equals(earlyVal, "true", StringComparison.OrdinalIgnoreCase) ||
     Console.WriteLine($"EARLY: starting {Env.AppName} pid={Environment.ProcessId} WINTAP_DATA_ROOT={ConfigManager.GetValue<string>("DataRoot") ?? ""}");
 }
 
+#if WINTAP_CORE
+var builder = Host.CreateApplicationBuilder(args);
+#else
 var builder = WebApplication.CreateBuilder(args);
+#endif
 
 string settingsVal = ConfigManager.GetValue<string>("WINTAP_DISABLE_SETTINGS");
 bool settingsDisabled = string.Equals(settingsVal, "true", StringComparison.OrdinalIgnoreCase) ||
@@ -67,6 +85,7 @@ bool settingsDisabled = string.Equals(settingsVal, "true", StringComparison.Ordi
 
 // ─── Configure Wintap to listen on port 8099 ───────────────────────────────
 // Bind explicitly to IPv4 loopback to avoid hostname resolution stalls in some environments.
+#if !WINTAP_CORE
 builder.WebHost.UseUrls("http://127.0.0.1:8099");
 
 builder.Services.AddControllers();
@@ -239,6 +258,8 @@ catch (Exception ex)
 // SERVICE CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+#endif
+
 WintapLogger.Log.Append("Configuring dependencies", LogLevel.Info);
 
 string esperReproVal = ConfigManager.GetValue<string>("WINTAP_ESPER_REPRO");
@@ -279,6 +300,7 @@ builder.Services.AddSingleton<IWintapLogger>(sp => WintapLogger.Log);
 
 // ─── Inference Registration ────────────────────────────────────────────────
 // Register WintapInference as IInfer for plugin AI access
+#if !WINTAP_CORE
 builder.Services.AddSingleton<IInfer>(sp =>
 {
     var chatClient = sp.GetService<IChatClient>();
@@ -299,6 +321,8 @@ WintapLogger.Log.Append("Registering platform-specific process resolver", LogLev
 
 // ─── Process Resolver Registration (cross-platform) ────────────────────
 WintapLogger.Log.Append("Registering cross-platform process resolver", LogLevel.Info);
+
+#endif
 
 string disableProcessResolverVal = ConfigManager.GetValue<string>("WINTAP_DISABLE_PROCESS_RESOLVER");
 bool disableProcessResolver = string.Equals(disableProcessResolverVal, "true", StringComparison.OrdinalIgnoreCase) ||
@@ -327,6 +351,7 @@ builder.Services.AddSystemd();  // For Linux systemd integration
 builder.Services.AddHostedService<WinTapSvc>();
 
 // ─── SignalR Configuration ─────────────────────────────────────────────────
+#if !WINTAP_CORE
 builder.Services.AddSignalR();
 builder.Services.AddSpaStaticFiles(configuration =>
 {
@@ -337,6 +362,7 @@ builder.Services.AddSpaStaticFiles(configuration =>
 // APPLICATION PIPELINE CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+#endif
 WintapLogger.Log.Append("Building app container", LogLevel.Info);
 var app = builder.Build();
 
@@ -344,6 +370,7 @@ var app = builder.Build();
 ServiceProviderAccessor.Services = app.Services;
 
 // ─── Middleware Pipeline ───────────────────────────────────────────────────
+#if !WINTAP_CORE
 if (!settingsDisabled && Settings.Default.EnableWorkbench)
 {
     app.UseStaticFiles();
@@ -387,6 +414,7 @@ app.UseEndpoints(endpoints =>
 // APPLICATION STARTUP
 // ═══════════════════════════════════════════════════════════════════════════
 
+#endif
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     string parquetPath = EtlPaths.ParquetDataPath;

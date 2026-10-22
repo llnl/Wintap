@@ -1,4 +1,4 @@
-﻿using com.espertech.esper.client;
+using com.espertech.esper.client;
 using com.espertech.esper.compat.collections;
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.shared;
@@ -133,7 +133,9 @@ namespace gov.llnl.wintap.core.infrastructure
                 WintapLogger.Log.Append($"Loading plugins from: {Env.FilePluginPath}", LogLevel.Info);
 
                 LoadPluginAssemblies();
+#if !WINTAP_CORE
                 await RegisterPluginMcpServersAsync();  // Register plugin MCP servers
+#endif
                 RegisterEventHandlers();
                 StartPluginScheduler();
 
@@ -156,6 +158,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
             try
             {
+#if !WINTAP_CORE
                 // Shutdown plugin MCP servers FIRST
                 var mcpManager = ServiceProviderAccessor.Services?.GetService(typeof(PluginMcpManager)) as PluginMcpManager;
                 if (mcpManager != null)
@@ -163,6 +166,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     await mcpManager.ShutdownAllAsync();
                 }
 
+#endif
                 // Unregister providers
                 foreach (var provider in providers.Reverse())
                 {
@@ -374,6 +378,7 @@ namespace gov.llnl.wintap.core.infrastructure
         /// Registers MCP servers for plugins that implement IProvideMCP.
         /// Plugin MCP tools are automatically namespaced as "PluginName_ToolName".
         /// </summary>
+#if !WINTAP_CORE
         private async Task RegisterPluginMcpServersAsync()
         {
             try
@@ -491,6 +496,7 @@ namespace gov.llnl.wintap.core.infrastructure
         /// <summary>
         /// Helper method to extract plugin name from metadata.
         /// </summary>
+#endif
         private string GetPluginName(object metadata)
         {
             // Use reflection to get the Name property from metadata

@@ -13,7 +13,8 @@
     <WintapCore Condition="'$(WintapCore)' == ''">true</WintapCore>
     <ShipsInAlpha>true</ShipsInAlpha>
     <AssemblyName>Wintap</AssemblyName>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetPlatformVersion>10.0.17763.0</TargetPlatformVersion>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
@@ -49,29 +50,6 @@
     <PackageReference Include="System.Diagnostics.PerformanceCounter" />
     <PackageReference Include="System.Diagnostics.EventLog" />
     <PackageReference Include="TaskScheduler" />
-  </ItemGroup>
-
-  <!--
-    SENS COM interop, generated into obj\ at build from the system type library (the vendored unsigned
-    lib\Interop.SensEvents.dll is deleted). tlbimp.exe ships in the .NET Framework SDK tools folder of the
-    Windows SDK; override with /p:TlbImpExe=... . If unavailable, hand-declare ISensLogon with [ComImport]
-    in platform\windows\sensor\sens\ and delete this target.
-  -->
-  <PropertyGroup>
-    <TlbImpExe Condition="'$(TlbImpExe)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8.1 Tools\x64\tlbimp.exe')">$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8.1 Tools\x64\tlbimp.exe</TlbImpExe>
-    <TlbImpExe Condition="'$(TlbImpExe)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\x64\tlbimp.exe')">$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\x64\tlbimp.exe</TlbImpExe>
-    <SensInteropDll>$(IntermediateOutputPath)Interop.SensEvents.dll</SensInteropDll>
-  </PropertyGroup>
-  <Target Name="GenerateSensInterop" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(SensInteropDll)')">
-    <Error Condition="!Exists('$(TlbImpExe)')" Text="tlbimp.exe not found. Install the Windows SDK or set TlbImpExe, or replace the interop with a [ComImport] declaration." />
-    <Exec Command="&quot;$(TlbImpExe)&quot; &quot;$(SystemRoot)\System32\sens.dll&quot; /out:&quot;$(SensInteropDll)&quot; /namespace:SensEvents /silent" />
-  </Target>
-  <ItemGroup>
-    <Reference Include="Interop.SensEvents">
-      <HintPath>$(SensInteropDll)</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
-      <Private>true</Private>
-    </Reference>
   </ItemGroup>
 
   <ItemGroup>

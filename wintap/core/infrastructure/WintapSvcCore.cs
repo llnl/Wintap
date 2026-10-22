@@ -1,5 +1,5 @@
 using DuckDB.NET.Data;
-using gov.llnl.wintap.core.api;
+
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.infrastructure.health;
 using gov.llnl.wintap.core.shared;
