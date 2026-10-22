@@ -12,6 +12,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 foreach (var entry in config.Serializers)
                     if (string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)) custom = entry.Value;
             bool registry = name == "registryserializer", file = name == "fileserializer";
+            bool snapshot = name == "defaultserializer";
             int capacity = ResolveQueueCapacity(custom?.MaxQueueEvents,
                 registry ? ResolveQueueCapacity(config.RegistrySerializationMaxQueueEvents, inheritedCapacity) : inheritedCapacity);
             capacity = ResolveQueueCapacity(capacityOverride, capacity);
@@ -20,13 +21,13 @@ namespace gov.llnl.wintap.core.etl.extract
             if (custom?.IntervalSec != null)
                 interval = custom.IntervalSec > 0 ? custom.IntervalSec.Value : (config.SerializationIntervalSec > 0 ? config.SerializationIntervalSec : 60);
             int highWater = custom?.HighWaterEvents ?? (registry ? config.RegistrySerializationHighWaterEvents ?? 5000
-                : file ? config.FileSerializationHighWaterEvents ?? 5000 : 0);
+                : file ? config.FileSerializationHighWaterEvents ?? 5000 : snapshot ? 5000 : 0);
             return new ETLConfig.SerializerOptions
             {
-                // File and registry are the two burst-prone serializers. Their
-                // high-water drain must not compete with callback work for a
-                // ThreadPool slot after the bounded queue is already half full.
-                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || file),
+                // File, registry, and memory-map snapshot bursts drain on a
+                // dedicated worker instead of competing for shared ThreadPool
+                // capacity as their bounded queues approach the high-water mark.
+                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || file || snapshot),
                 IntervalSec = interval,
                 MaxQueueEvents = capacity,
                 HighWaterEvents = ResolveHighWaterEvents(highWater, capacity)

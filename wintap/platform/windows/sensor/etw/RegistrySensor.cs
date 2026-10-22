@@ -206,7 +206,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             return collectRegistryRead();
         }
 
-        // FINAL (Architect 2026-08-25; probe8 PASS — see the ADR addendum).
+        // FINAL (Architect 2026-08-25; probe8 PASS â€” see the ADR addendum).
         internal static ulong SelectKeywordMask(bool collectRegistryRead)
         {
             return collectRegistryRead

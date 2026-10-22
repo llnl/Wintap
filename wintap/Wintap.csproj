@@ -19,6 +19,12 @@
 
 	<!-- Windows-specific packages -->
 	<ItemGroup>
+		<Reference Include="Interop.SensEvents">
+			<HintPath>lib\Interop.SensEvents.dll</HintPath>
+			<EmbedInteropTypes>false</EmbedInteropTypes>
+		</Reference>
+	</ItemGroup>
+	<ItemGroup>
 		<PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.23" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Windows.Compatibility" Version="8.0.4" />
