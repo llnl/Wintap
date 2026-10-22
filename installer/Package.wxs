@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Wintap 7 — WiX 5 package. Replaces platform\windows\WintapSetup\*.vdproj.
+  PUBLISH: framework-dependent (requires .NET 10 runtime on the host; see the DOTNETHOSTVERSION launch condition).
   SCOPE (Dave, 2026-10-22): the Wintap sensor service ONLY — the contents of `dotnet publish wintap\Wintap.csproj`,
   which includes WintapAPI.dll and wintap_mcp_server.exe. WintapCoreSvcMgr and WintapRecorder are NOT packaged.
   AGENT: fill the three TODO values from the existing vdproj / service registration code before first build.
@@ -36,8 +37,18 @@
     <Property Id="COLLECTOR_URL" Secure="yes" />
     <Property Id="ARPPRODUCTICON" Value="WintapIcon" />
     <Property Id="ARPNOMODIFY" Value="1" />
-    <Property Id="ARPCOMMENTS" Value="Wintap $(var.WintapVersion) $(var.WintapChannel) — core telemetry collection only; Workbench and MCP are not included in this build." />
+    <Property Id="ARPCOMMENTS" Value="Wintap $(var.WintapVersion) $(var.WintapChannel) — core telemetry collection only; Workbench and MCP are not included in this build. Requires the Microsoft .NET 10 Runtime (x64), serviced by Windows Update / WSUS." />
     <Icon Id="WintapIcon" SourceFile="$(var.PublishDir)Wintap.exe" />
+
+    <!-- PREREQUISITE: .NET 10 runtime (x64), framework-dependent by decision 2026-10-22. MSI cannot compare versions
+         natively, so this is a best-effort check: the dotnet shared host version must contain "10." (the host version is the
+         highest runtime installed). Good enough for the alpha; GA should ship a Burn bundle that chains Microsoft's signed
+         runtime installer when missing (WixToolset.Netfx.wixext DotNetCoreSearch). -->
+    <Property Id="DOTNETHOSTVERSION" Secure="yes">
+      <RegistrySearch Id="DotNetHostVersion" Root="HKLM" Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost" Name="Version" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR (DOTNETHOSTVERSION &gt;&lt; &quot;10.&quot;)"
+            Message="$(var.ProductName) requires the Microsoft .NET 10 Runtime (x64). Install it from https://dotnet.microsoft.com/download/dotnet/10.0 (the &quot;.NET Runtime&quot; package is sufficient; no SDK, no Desktop runtime) and run this installer again." />
 
     <!-- Require Windows 10 1809+ / Server 2019+ : .NET 10 and TraceEvent 4 floor -->
     <Launch Condition="Installed OR (VersionNT >= 603 AND WindowsBuild >= 17763)"
