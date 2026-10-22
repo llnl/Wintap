@@ -24,7 +24,7 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <!-- Publish shape for the MSI: self-contained, single directory, ReadyToRun. Trimming OFF:
          NEsper compiles EPL with Roslyn at runtime and MEF loads plugins by reflection. -->
-    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
