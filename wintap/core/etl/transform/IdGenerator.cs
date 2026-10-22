@@ -11,6 +11,7 @@
  */
 
 using System;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace gov.llnl.wintap.core.etl.transform
@@ -22,12 +23,7 @@ namespace gov.llnl.wintap.core.etl.transform
         // Generate the hash.
         internal string GetHash(string preImage)
         {
-            byte[] buffer = Encoding.UTF8.GetBytes(preImage);
-            byte[] preImageBytes = Encoding.UTF8.GetBytes(preImage);
-            Org.BouncyCastle.Crypto.Digests.MD5Digest hash = new Org.BouncyCastle.Crypto.Digests.MD5Digest();
-            byte[] result = new byte[hash.GetDigestSize()];
-            hash.BlockUpdate(preImageBytes, 0, preImageBytes.Length);
-            hash.DoFinal(result, 0);
+            byte[] result = MD5.HashData(Encoding.UTF8.GetBytes(preImage));
             StringBuilder hashStr = new StringBuilder(9999);
             for (int i = 0; i < result.Length; i++)
             {
