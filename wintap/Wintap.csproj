@@ -36,6 +36,7 @@
   <!-- Core build: Workbench API, LLM client and MCP loader are not compiled. Files stay in the repo. -->
   <ItemGroup Condition="'$(WintapCore)' == 'true'">
     <Compile Remove="core\api\**\*.cs" />
+    <Compile Include="core\api\helpers\EnumFormatter.cs" />
     <Compile Remove="core\infrastructure\WintapInference.cs" />
     <Compile Remove="core\infrastructure\PluginMcpManager.cs" />
     <!-- AGENT: add any further file the compiler reports as depending on ASP.NET Core, Microsoft.Extensions.AI or ModelContextProtocol -->

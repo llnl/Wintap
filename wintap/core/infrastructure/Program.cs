@@ -415,7 +415,7 @@ app.UseEndpoints(endpoints =>
 // ═══════════════════════════════════════════════════════════════════════════
 
 #endif
-app.Lifetime.ApplicationStarted.Register(() =>
+app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStarted.Register(() =>
 {
     string parquetPath = EtlPaths.ParquetDataPath;
     string rawSensorPath = Path.Combine(parquetPath, "raw_sensor");
