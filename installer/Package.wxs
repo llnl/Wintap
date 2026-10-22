@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wintap 7 — WiX 5 package. Replaces platform\windows\WintapSetup\*.vdproj.
+  SCOPE (Dave, 2026-10-22): the Wintap sensor service ONLY — the contents of `dotnet publish wintap\Wintap.csproj`,
+  which includes WintapAPI.dll and wintap_mcp_server.exe. WintapCoreSvcMgr and WintapRecorder are NOT packaged.
+  AGENT: fill the three TODO values from the existing vdproj / service registration code before first build.
+    - UpgradeCode: MUST equal the UpgradeCode of the shipped vdproj MSI if existing installs are to upgrade in place.
+      Read it from WintapSetup.vdproj ("UpgradeCode" = "8:{...}") and paste it. If none is found, generate one ONCE and never change it.
+    - ServiceName / DisplayName: whatever Program.cs passes to UseWindowsService / the service installer today.
+    - Any config files the service expects beside Wintap.exe that are not in the publish folder.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <?define ProductName = "Wintap" ?>
+  <?define Manufacturer = "Lawrence Livermore National Laboratory" ?>
+  <?define ServiceName = "TODO-ServiceName" ?>
+  <?define ServiceDisplayName = "TODO-Wintap Host Sensor" ?>
+  <?define UpgradeCode = "TODO-{PASTE-FROM-vdproj-OR-GENERATE-ONCE}" ?>
+
+  <Package Name="$(var.ProductName)"
+           Manufacturer="$(var.Manufacturer)"
+           Version="$(var.WintapVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Language="1033"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Public properties for silent install:  msiexec /i Wintap-7.0.0-x64.msi /qn COLLECTOR_URL=https://... /l*v wintap-install.log -->
+    <Property Id="COLLECTOR_URL" Secure="yes" />
+    <Property Id="ARPPRODUCTICON" Value="WintapIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPCOMMENTS" Value="Wintap $(var.WintapVersion) $(var.WintapChannel) — core telemetry collection only; Workbench and MCP are not included in this build." />
+    <Icon Id="WintapIcon" SourceFile="$(var.PublishDir)Wintap.exe" />
+
+    <!-- Require Windows 10 1809+ / Server 2019+ : .NET 10 and TraceEvent 4 floor -->
+    <Launch Condition="Installed OR (VersionNT >= 603 AND WindowsBuild >= 17763)"
+            Message="$(var.ProductName) requires Windows 10 version 1809 / Windows Server 2019 or later." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Wintap" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataFolder" Name="Wintap" />
+    </StandardDirectory>
+
+    <Feature Id="Sensor" Title="Wintap sensor service" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="PublishedFiles" />
+      <ComponentRef Id="ServiceComponent" />
+      <ComponentRef Id="DataFolderComponent" />
+    </Feature>
+
+    <!-- Everything dotnet publish produced, harvested by wildcard (WiX 5 Files element; no heat.exe) -->
+    <ComponentGroup Id="PublishedFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)Wintap.exe" />   <!-- the exe is installed by ServiceComponent so it can own the service -->
+        <Exclude Files="$(var.PublishDir)*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="ServiceComponent" Directory="INSTALLFOLDER" Guid="*" Bitness="always64">
+      <File Id="WintapExe" Source="$(var.PublishDir)Wintap.exe" KeyPath="yes" />
+      <ServiceInstall Id="WintapService"
+                      Name="$(var.ServiceName)"
+                      DisplayName="$(var.ServiceDisplayName)"
+                      Description="Host telemetry sensor (ETW process, file, registry, network events)."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="LocalSystem"
+                      Vital="yes">
+        <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
+        <ServiceDependency Id="EventLog" />
+      </ServiceInstall>
+      <ServiceControl Id="WintapServiceControl" Name="$(var.ServiceName)" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      <!-- Persist the public property so repair/upgrade keeps it -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\$(var.Manufacturer)\$(var.ProductName)" Name="CollectorUrl" Type="string" Value="[COLLECTOR_URL]" />
+    </Component>
+
+    <Component Id="DataFolderComponent" Directory="DataFolder" Guid="*" Bitness="always64">
+      <CreateFolder>
+        <!-- SYSTEM full, Administrators full, nobody else: the sensor's spool must not be user-writable -->
+        <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+        <util:PermissionEx User="Administrators" GenericAll="yes" />
+      </CreateFolder>
+      <RemoveFolder Id="RemoveDataFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\$(var.Manufacturer)\$(var.ProductName)" Name="DataFolder" Type="string" Value="[DataFolder]" KeyPath="yes" />
+    </Component>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+  </Package>
+</Wix>

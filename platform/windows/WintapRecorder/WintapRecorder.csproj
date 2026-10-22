@@ -1,22 +1,19 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net6.0-windows</TargetFramework>
+    <!-- 2026-10-22: was net6.0-windows (out of support since 2024-11-12) -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <Platforms>AnyCPU;x64</Platforms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-	<Version>1.0.1.1</Version>
-	<ApplicationIcon>fullcolor.ico</ApplicationIcon>
+    <ApplicationIcon>fullcolor.ico</ApplicationIcon>
   </PropertyGroup>
-
   <ItemGroup>
     <Content Include="fullcolor.ico" />
   </ItemGroup>
-
   <ItemGroup>
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="6.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" />
   </ItemGroup>
-
 </Project>

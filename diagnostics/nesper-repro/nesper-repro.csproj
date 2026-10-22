@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -10,9 +10,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NEsper.Compiler" Version="8.9.0" />
-    <PackageReference Include="NEsper.Runtime" Version="8.9.0" />
-    <PackageReference Include="NEsper.Compat" Version="8.9.0" />
+    <PackageReference Include="NEsper.Compiler" />
+    <PackageReference Include="NEsper.Runtime" />
+    <PackageReference Include="NEsper.Compat" />
   </ItemGroup>
 
   <ItemGroup>

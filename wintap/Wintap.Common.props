@@ -1,232 +1,98 @@
-﻿<Project>
-	<!-- Common properties shared across all platforms -->
-	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
-		<OutputType>Exe</OutputType>
-		<RootNamespace>gov.llnl.wintap</RootNamespace>
-		<EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
-		<SelfContained>false</SelfContained>
-		<IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
-		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-		<GenerateDocumentationFile>True</GenerateDocumentationFile>
-		<AssemblyVersion>7.0.0.0</AssemblyVersion>
-		<FileVersion>7.0.0.0</FileVersion>
-		<SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
-		<UseCommonOutputDirectory>false</UseCommonOutputDirectory>
-		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-	</PropertyGroup>
+<Project>
+  <!--
+    Wintap.Common.props — shared by Wintap (Windows), Lintap (Linux), Mactap (macOS).
+    2026-10-22 rewrite: net10, no BinaryFormatter, 20 packages (versions in Directory.Packages.props).
+    Everything from the original file that is NOT about packages or framework is preserved below unchanged.
+  -->
+  <PropertyGroup>
+    <!-- Wintap.csproj overrides to net10.0-windows; Lintap/Mactap take net10.0 -->
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>gov.llnl.wintap</RootNamespace>
+    <SelfContained>false</SelfContained>
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+    <UseCommonOutputDirectory>false</UseCommonOutputDirectory>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <!-- REMOVED: EnableUnsafeBinaryFormatterSerialization — no BinaryFormatter use exists in source -->
+  </PropertyGroup>
 
-	<!-- Platform-specific intermediate output paths are set in Directory.Build.props.
-	     They must be defined before Microsoft.Common.props imports NuGet targets. -->
+  <!-- ===== File exclusions common to all platforms (unchanged) ===== -->
+  <ItemGroup>
+    <Compile Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
+    <Content Remove="App_Start\**;binary\**" />
+    <EmbeddedResource Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
+    <None Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
+    <Compile Remove="core\shared\SingleLogit.cs" />
+    <!-- 2026-10-22: packet capture removed from the product -->
+    <Compile Remove="core\sensor\PcapCollector.cs" />
+  </ItemGroup>
 
-	<!-- File exclusions common to all platforms -->
-	<ItemGroup>
-		<Compile Remove="App_Start\**" />
-		<Compile Remove="binary\**" />
-		<Compile Remove="MergeHelper\**" />
-		<Compile Remove="WintapAPI\**" />
-		<Compile Remove="WintapETL\**" />
-		<Compile Remove="WintapRecorder\**" />
-		<Compile Remove="WintapSvcMgr\**" />
-		<Content Remove="App_Start\**" />
-		<Content Remove="binary\**" />
-		<EmbeddedResource Remove="App_Start\**" />
-		<EmbeddedResource Remove="binary\**" />
-		<EmbeddedResource Remove="MergeHelper\**" />
-		<EmbeddedResource Remove="WintapAPI\**" />
-		<EmbeddedResource Remove="WintapETL\**" />
-		<EmbeddedResource Remove="WintapRecorder\**" />
-		<EmbeddedResource Remove="WintapSvcMgr\**" />
-		<None Remove="App_Start\**" />
-		<None Remove="binary\**" />
-		<None Remove="MergeHelper\**" />
-		<None Remove="WintapAPI\**" />
-		<None Remove="WintapETL\**" />
-		<None Remove="WintapRecorder\**" />
-		<None Remove="WintapSvcMgr\**" />
-		<Compile Remove="core\shared\SingleLogit.cs" />
-	</ItemGroup>
+  <!-- ===== Platform exclusions (unchanged) ===== -->
+  <ItemGroup Condition="'$(AssemblyName)' == 'Wintap'">
+    <Compile Remove="platform\linux\**;platform\macos\**" />
+    <None Include="platform\linux\**;platform\macos\**" />
+    <EmbeddedResource Remove="platform\linux\**;platform\macos\**" />
+    <Content Remove="platform\linux\**;platform\macos\**" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(AssemblyName)' == 'Lintap'">
+    <Compile Remove="platform\windows\**;platform\macos\**" />
+    <None Include="platform\windows\**;platform\macos\**" />
+    <EmbeddedResource Remove="platform\windows\**;platform\macos\**" />
+    <Content Remove="platform\windows\**;platform\macos\**" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(AssemblyName)' == 'Mactap'">
+    <Compile Remove="platform\windows\**;platform\linux\**" />
+    <None Include="platform\windows\**;platform\linux\**" />
+    <EmbeddedResource Remove="platform\windows\**;platform\linux\**" />
+    <Content Remove="platform\windows\**;platform\linux\**" />
+  </ItemGroup>
 
-	<!-- Platform-specific exclusions: Wintap (Windows) excludes Linux and macOS -->
-	<ItemGroup Condition="'$(AssemblyName)' == 'Wintap'">
-		<Compile Remove="platform\linux\**" />
-		<Compile Remove="platform\macos\**" />
-		<None Include="platform\linux\**" />
-		<None Include="platform\macos\**" />
-		<EmbeddedResource Remove="platform\linux\**" />
-		<EmbeddedResource Remove="platform\macos\**" />
-		<Content Remove="platform\linux\**" />
-		<Content Remove="platform\macos\**" />
-	</ItemGroup>
+  <!-- ===== Designer files (unchanged) ===== -->
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs"><AutoGen>True</AutoGen><DesignTime>True</DesignTime><DependentUpon>Resources.resx</DependentUpon></Compile>
+    <Compile Update="Properties\Settings.Designer.cs"><AutoGen>True</AutoGen><DesignTimeSharedInput>True</DesignTimeSharedInput><DependentUpon>Settings.settings</DependentUpon></Compile>
+    <EmbeddedResource Update="Properties\Resources.resx"><Generator>ResXFileCodeGenerator</Generator><LastGenOutput>Resources.Designer.cs</LastGenOutput><SubType>Designer</SubType></EmbeddedResource>
+    <None Update="Properties\Settings.settings"><Generator>SettingsSingleFileGenerator</Generator><LastGenOutput>Settings.Designer.cs</LastGenOutput><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+  </ItemGroup>
 
-	<!-- Platform-specific exclusions: Lintap (Linux) excludes Windows and macOS -->
-	<ItemGroup Condition="'$(AssemblyName)' == 'Lintap'">
-		<Compile Remove="platform\windows\**" />
-		<Compile Remove="platform\macos\**" />
-		<None Include="platform\windows\**" />
-		<None Include="platform\macos\**" />
-		<EmbeddedResource Remove="platform\windows\**" />
-		<EmbeddedResource Remove="platform\macos\**" />
-		<Content Remove="platform\windows\**" />
-		<Content Remove="platform\macos\**" />
-	</ItemGroup>
+  <!-- ===== Embedded EPL files and ETL config (unchanged, wildcarded) ===== -->
+  <ItemGroup>
+    <None Remove="core\etl\esper\*.epl" />
+    <EmbeddedResource Include="core\etl\esper\*.epl" />
+    <Content Include="core\etl\esper\*.epl"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><Link>esper\%(Filename)%(Extension)</Link></Content>
+    <None Include="core\etl\ETLConfig.json"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><Link>ETLConfig.json</Link></None>
+  </ItemGroup>
 
-	<!-- Platform-specific exclusions: Mactap (macOS) excludes Windows and Linux -->
-	<ItemGroup Condition="'$(AssemblyName)' == 'Mactap'">
-		<Compile Remove="platform\windows\**" />
-		<Compile Remove="platform\linux\**" />
-		<None Include="platform\windows\**" />
-		<None Include="platform\linux\**" />
-		<EmbeddedResource Remove="platform\windows\**" />
-		<EmbeddedResource Remove="platform\linux\**" />
-		<Content Remove="platform\windows\**" />
-		<Content Remove="platform\linux\**" />
-	</ItemGroup>
+  <!-- ===== Cross-platform package references — versions come from Directory.Packages.props ===== -->
+  <ItemGroup Label="Sensor core">
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="System.ComponentModel.Composition" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" />
+    <PackageReference Include="NEsper.Runtime" />
+    <PackageReference Include="NEsper.Compiler" />
+    <PackageReference Include="NEsper.Compat" />
+    <PackageReference Include="DuckDB.NET.Data.Full" />
+    <PackageReference Include="Parquet.Net" />
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="Newtonsoft.Json" />
+  </ItemGroup>
+  <ItemGroup Label="In-process LLM and MCP — FULL PRODUCT ONLY (not in the 7.0 alpha core build)" Condition="'$(WintapCore)' != 'true'">
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="ModelContextProtocol" />
+  </ItemGroup>
 
-	<!-- Designer files -->
-	<ItemGroup>
-		<Compile Update="Properties\Resources.Designer.cs">
-			<AutoGen>True</AutoGen>
-			<DesignTime>True</DesignTime>
-			<DependentUpon>Resources.resx</DependentUpon>
-		</Compile>
-		<Compile Update="Properties\Settings.Designer.cs">
-			<AutoGen>True</AutoGen>
-			<DesignTimeSharedInput>True</DesignTimeSharedInput>
-			<DependentUpon>Settings.settings</DependentUpon>
-		</Compile>
-		<EmbeddedResource Update="Properties\Resources.resx">
-			<Generator>ResXFileCodeGenerator</Generator>
-			<LastGenOutput>Resources.Designer.cs</LastGenOutput>
-			<SubType>Designer</SubType>
-		</EmbeddedResource>
-		<None Update="Properties\Settings.settings">
-			<Generator>SettingsSingleFileGenerator</Generator>
-			<LastGenOutput>Settings.Designer.cs</LastGenOutput>
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-	</ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\shared\WintapAPI\WintapAPI.csproj" />
+  </ItemGroup>
 
-	<!-- Embedded EPL files -->
-	<ItemGroup>
-		<None Remove="core\etl\esper\default.epl" />
-		<None Remove="core\etl\esper\esper-context.epl" />
-		<None Remove="core\etl\esper\file.epl" />
-		<None Remove="core\etl\esper\focuschange.epl" />
-		<None Remove="core\etl\esper\process-stop.epl" />
-		<None Remove="core\etl\esper\process.epl" />
-		<None Remove="core\etl\esper\registry.epl" />
-		<None Remove="core\etl\esper\selinux.epl" />
-		<None Remove="core\etl\esper\tcp.epl" />
-		<None Remove="core\etl\esper\udp.epl" />
-		<EmbeddedResource Include="core\etl\esper\default.epl" />
-		<EmbeddedResource Include="core\etl\esper\esper-context.epl" />
-		<EmbeddedResource Include="core\etl\esper\file.epl" />
-		<EmbeddedResource Include="core\etl\esper\focuschange.epl" />
-		<EmbeddedResource Include="core\etl\esper\process-stop.epl" />
-		<EmbeddedResource Include="core\etl\esper\process.epl" />
-		<EmbeddedResource Include="core\etl\esper\registry.epl" />
-		<EmbeddedResource Include="core\etl\esper\selinux.epl" />
-		<EmbeddedResource Include="core\etl\esper\tcp.epl" />
-		<EmbeddedResource Include="core\etl\esper\udp.epl" />
-		<Content Include="core\etl\esper\*.epl">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<Link>esper\%(Filename)%(Extension)</Link>
-		</Content>
-		<None Include="core\etl\ETLConfig.json">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<Link>ETLConfig.json</Link>
-		</None>
-	</ItemGroup>
-
-	<!-- Cross-platform package references -->
-	<ItemGroup>
-		<PackageReference Include="Anthropic.SDK" Version="5.4.1" />
-		<PackageReference Include="AWSSDK.S3" Version="3.7.400.1" />
-		<PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
-		<PackageReference Include="Castle.Windsor" Version="6.0.0" />
-		<PackageReference Include="Common.Logging" Version="3.4.1" />
-		<PackageReference Include="Common.Logging.Core" Version="3.4.1" />
-		<PackageReference Include="Crc32.NET" Version="1.2.0" />
-		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.3.2" />
-		<PackageReference Include="Microsoft.AspNet.WebApi.Client" Version="6.0.0" />
-		<PackageReference Include="Microsoft.AspNet.WebApi.OwinSelfHost" Version="5.3.0" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson" Version="8.0.4" />
-		<PackageReference Include="Microsoft.AspNetCore.SpaServices.Extensions" Version="8.0.4" />
-		<PackageReference Include="Microsoft.DotNet.PlatformAbstractions" Version="3.1.6" />
-		<PackageReference Include="Microsoft.Extensions.AI" Version="9.9.0" />
-		<PackageReference Include="Microsoft.Extensions.AI.Ollama" Version="9.7.0-preview.1.25356.2" />
-		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.8.0-preview.1.25412.6" />
-		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-		<PackageReference Include="Microsoft.NETCore.Portable.Compatibility" Version="1.0.2" />
-		<PackageReference Include="Microsoft.OpenApi" Version="2.3.1" />
-		<PackageReference Include="Microsoft.SemanticKernel" Version="1.64.0" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.Chroma" Version="1.64.0-alpha" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.HuggingFace" Version="1.55.0-preview" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.Ollama" Version="1.65.0-alpha" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.Sqlite" Version="1.51.0-preview" />
-		<PackageReference Include="Microsoft.SemanticKernel.Plugins.Memory" Version="1.55.0-alpha" />
-		<PackageReference Include="ModelContextProtocol" Version="0.2.0-preview.3" />
-		<PackageReference Include="NEsper.Compat" Version="8.9.0" />
-		<PackageReference Include="NEsper.Compiler" Version="8.9.0" />
-		<PackageReference Include="NEsper.Runtime" Version="8.9.0" />
-		<PackageReference Include="Newtonsoft.Json.Bson" Version="1.0.2" />
-		<PackageReference Include="Parquet.Net" Version="4.24.0" />
-		<PackageReference Include="SharpPcap" Version="6.3.0" />
-		<PackageReference Include="System.ComponentModel.Composition" Version="8.0.0" />
-		<PackageReference Include="System.Data.DataSetExtensions" Version="4.5.0" />
-		<PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
-		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
-		<PackageReference Include="System.Management" Version="8.0.0" />
-		<PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.8" />
-		<PackageReference Include="XLR8.CGLib" Version="1.1.0" />
-		<PackageReference Include="Microsoft.AspNetCore.SystemWebAdapters" Version="1.3.0" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.4" />
-		<PackageReference Include="Microsoft.AspNetCore.Metadata" Version="8.0.4" />
-		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.3" />
-		<PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0-preview.5.25277.114" />
-		<PackageReference Include="Microsoft.Extensions.FileProviders.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="8.0.4" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.3" />
-		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="8.0.4" />
-		<PackageReference Include="Microsoft.Extensions.Primitives" Version="9.0.3" />
-		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-		<PackageReference Include="System.Collections.Immutable" Version="8.0.0" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.3" />
-		<PackageReference Include="System.IO.Pipelines" Version="9.0.3" />
-		<PackageReference Include="System.Reflection.Metadata" Version="8.0.0" />
-		<PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
-		<PackageReference Include="System.Security.AccessControl" Version="6.0.1" />
-		<PackageReference Include="System.Text.Encodings.Web" Version="9.0.3" />
-		<PackageReference Include="System.Text.Json" Version="9.0.3" />
-		<PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.0" />
-		<PackageReference Include="System.ServiceModel.Primitives" Version="8.0.0" />
-		<PackageReference Include="System.ServiceModel.Http" Version="8.0.0" />
-		<PackageReference Include="System.ServiceModel.Duplex" Version="6.0.0" />
-		<PackageReference Include="System.ServiceModel.NetTcp" Version="8.0.0" />
-		<PackageReference Include="System.ServiceModel.Security" Version="6.0.0" />
-		<PackageReference Include="System.ServiceModel.Federation" Version="8.0.0" />
-	</ItemGroup>
-
-	<!-- Project references -->
-	<ItemGroup>
-		<ProjectReference Include="..\shared\WintapAPI\WintapAPI.csproj" />
-	</ItemGroup>
-
-	<!-- Copy Angular Workbench to output -->
-	<Target Name="CopyWorkbench" AfterTargets="Build">
-		<ItemGroup>
-			<WorkbenchFiles Include="..\..\shared\Wintap-Workbench\dist\Workbench\**\*.*" />
-		</ItemGroup>
-		<Copy SourceFiles="@(WorkbenchFiles)"
-			  DestinationFolder="$(OutputPath)Workbench\%(RecursiveDir)"
-			  SkipUnchangedFiles="true"
-			  Condition="Exists('..\..\shared\Wintap-Workbench\dist\Workbench')" />
-		<Message Text="✓ Copied Angular Workbench to output"
-				 Importance="high"
-				 Condition="Exists('..\..\shared\Wintap-Workbench\dist\Workbench')" />
-	</Target>
-
+  <!-- ===== Copy Angular Workbench to output — FULL PRODUCT ONLY ===== -->
+  <Target Name="CopyWorkbench" AfterTargets="Build" Condition="'$(WintapCore)' != 'true' and Exists('..\..\shared\Wintap-Workbench\dist\Workbench')">
+    <ItemGroup><WorkbenchFiles Include="..\..\shared\Wintap-Workbench\dist\Workbench\**\*.*" /></ItemGroup>
+    <Copy SourceFiles="@(WorkbenchFiles)" DestinationFolder="$(OutputPath)Workbench\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

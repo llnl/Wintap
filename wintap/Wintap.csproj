@@ -1,51 +1,89 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
-	<!-- Import common configuration -->
-	<Import Project="Wintap.Common.props" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Wintap 7 sensor.
+    WintapCore (default TRUE for the 7.0 alpha, Dave 2026-10-22): build only core telemetry collection.
+      - no ASP.NET Core / Workbench API / SignalR
+      - no in-process LLM client or MCP plugin loader
+      - no wintap_mcp_server build+copy, no Angular Workbench copy
+    Nothing is deleted from the repo: set /p:WintapCore=false (or flip the default) to build the full product.
+  -->
+  <Import Project="Wintap.Common.props" />
 
-	<!-- Windows-specific properties -->
-	<!-- Windows-specific properties -->
-	<PropertyGroup>
-		<AssemblyName>Wintap</AssemblyName>
-		<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
-		<DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
-		<UseCommonOutputDirectory>false</UseCommonOutputDirectory>
-		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-		<!-- Prevent duplicate assembly info generation -->
-		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-	</PropertyGroup>
+  <PropertyGroup>
+    <WintapCore Condition="'$(WintapCore)' == ''">true</WintapCore>
+    <ShipsInAlpha>true</ShipsInAlpha>
+    <AssemblyName>Wintap</AssemblyName>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <DefineConstants Condition="'$(WintapCore)' == 'true'">$(DefineConstants);WINTAP_CORE</DefineConstants>
+    <UseCommonOutputDirectory>false</UseCommonOutputDirectory>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Publish shape for the MSI: self-contained, single directory, ReadyToRun. Trimming OFF:
+         NEsper compiles EPL with Roslyn at runtime and MEF loads plugins by reflection. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
 
-	<!-- DO NOT exclude Platform.Windows - we need it! -->
-	<!-- Only Lintap and Mactap should exclude directories -->
+  <!-- Full product only: ASP.NET Core shared framework (replaces the former Sdk.Web) -->
+  <ItemGroup Condition="'$(WintapCore)' != 'true'">
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
-	<!-- Windows-specific packages -->
-	<ItemGroup>
-		<Reference Include="Interop.SensEvents">
-			<HintPath>lib\Interop.SensEvents.dll</HintPath>
-			<EmbedInteropTypes>false</EmbedInteropTypes>
-		</Reference>
-	</ItemGroup>
-	<ItemGroup>
-		<PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.23" />
-		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Windows.Compatibility" Version="8.0.4" />
-		<PackageReference Include="TaskScheduler" Version="2.11.1" />
-	</ItemGroup>
-	<ItemGroup>
-	  <Folder Include="core\models\" />
-	  <Folder Include="platform\macos\sensor\" />
-	</ItemGroup>
+  <!-- Core build: Workbench API, LLM client and MCP loader are not compiled. Files stay in the repo. -->
+  <ItemGroup Condition="'$(WintapCore)' == 'true'">
+    <Compile Remove="core\api\**\*.cs" />
+    <Compile Remove="core\infrastructure\WintapInference.cs" />
+    <Compile Remove="core\infrastructure\PluginMcpManager.cs" />
+    <!-- AGENT: add any further file the compiler reports as depending on ASP.NET Core, Microsoft.Extensions.AI or ModelContextProtocol -->
+  </ItemGroup>
 
-	<!-- Build and copy MCP server for Windows -->
-	<Target Name="BuildMcpServer" BeforeTargets="Build" Condition="Exists('..\..\shared\ai\wintap_mcp_server\wintap_mcp_server.csproj')">
-		<Message Text="Building MCP server for Windows..." Importance="high" />
-		<Exec Command="dotnet publish ..\..\shared\ai\wintap_mcp_server\wintap_mcp_server.csproj -c $(Configuration) -r win-x64 --self-contained false -o $(OutputPath)mcp_temp" ContinueOnError="true" IgnoreExitCode="true" />
-	</Target>
+  <!-- Windows-only packages — versions from Directory.Packages.props -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="System.Management" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" />
+    <PackageReference Include="System.Diagnostics.EventLog" />
+    <PackageReference Include="TaskScheduler" />
+  </ItemGroup>
 
-	<Target Name="CopyMcpServer" AfterTargets="BuildMcpServer" Condition="Exists('$(OutputPath)mcp_temp\wintap_mcp_server.exe')">
-		<Copy SourceFiles="$(OutputPath)mcp_temp\wintap_mcp_server.exe" DestinationFiles="$(OutputPath)wintap_mcp_server.exe" SkipUnchangedFiles="true" />
-		<Copy SourceFiles="$(OutputPath)mcp_temp\wintap_mcp_server.dll" DestinationFiles="$(OutputPath)wintap_mcp_server.dll" SkipUnchangedFiles="true" />
-		<RemoveDir Directories="$(OutputPath)mcp_temp" />
-		<Message Text="✓ Built and copied wintap_mcp_server.exe" Importance="high" />
-	</Target>
+  <!--
+    SENS COM interop, generated into obj\ at build from the system type library (the vendored unsigned
+    lib\Interop.SensEvents.dll is deleted). tlbimp.exe ships in the .NET Framework SDK tools folder of the
+    Windows SDK; override with /p:TlbImpExe=... . If unavailable, hand-declare ISensLogon with [ComImport]
+    in platform\windows\sensor\sens\ and delete this target.
+  -->
+  <PropertyGroup>
+    <TlbImpExe Condition="'$(TlbImpExe)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8.1 Tools\x64\tlbimp.exe')">$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8.1 Tools\x64\tlbimp.exe</TlbImpExe>
+    <TlbImpExe Condition="'$(TlbImpExe)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\x64\tlbimp.exe')">$(MSBuildProgramFiles32)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\x64\tlbimp.exe</TlbImpExe>
+    <SensInteropDll>$(IntermediateOutputPath)Interop.SensEvents.dll</SensInteropDll>
+  </PropertyGroup>
+  <Target Name="GenerateSensInterop" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(SensInteropDll)')">
+    <Error Condition="!Exists('$(TlbImpExe)')" Text="tlbimp.exe not found. Install the Windows SDK or set TlbImpExe, or replace the interop with a [ComImport] declaration." />
+    <Exec Command="&quot;$(TlbImpExe)&quot; &quot;$(SystemRoot)\System32\sens.dll&quot; /out:&quot;$(SensInteropDll)&quot; /namespace:SensEvents /silent" />
+  </Target>
+  <ItemGroup>
+    <Reference Include="Interop.SensEvents">
+      <HintPath>$(SensInteropDll)</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="core\models\" />
+  </ItemGroup>
+
+  <!-- Full product only: build and copy the MCP server -->
+  <Target Name="BuildMcpServer" BeforeTargets="Build" Condition="'$(WintapCore)' != 'true' and Exists('..\..\shared\ai\wintap_mcp_server\wintap_mcp_server.csproj')">
+    <Exec Command="dotnet publish ..\..\shared\ai\wintap_mcp_server\wintap_mcp_server.csproj -c $(Configuration) -r win-x64 --self-contained false -o $(OutputPath)mcp_temp" ContinueOnError="true" IgnoreExitCode="true" />
+  </Target>
+  <Target Name="CopyMcpServer" AfterTargets="BuildMcpServer" Condition="'$(WintapCore)' != 'true' and Exists('$(OutputPath)mcp_temp\wintap_mcp_server.exe')">
+    <Copy SourceFiles="$(OutputPath)mcp_temp\wintap_mcp_server.exe;$(OutputPath)mcp_temp\wintap_mcp_server.dll" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+    <RemoveDir Directories="$(OutputPath)mcp_temp" />
+  </Target>
 </Project>

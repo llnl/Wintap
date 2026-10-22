@@ -1,0 +1,23 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!--
+    Wintap 7 MSI. Build:
+      dotnet publish ..\wintap\Wintap.csproj -c Release -r win-x64 --self-contained -o ..\artifacts\publish
+      dotnet build  Wintap.Installer.wixproj -c Release -p:PublishDir=..\artifacts\publish\ -p:WintapVersion=7.0.0
+    Output: bin\Release\Wintap-7.0.0-x64.msi
+  -->
+  <PropertyGroup>
+    <OutputName>Wintap-$(WintapVersion)-$(WintapChannel)-x64</OutputName>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <WintapVersion Condition="'$(WintapVersion)' == ''">7.0.0</WintapVersion>
+    <!-- MSI ProductVersion must be numeric; the channel lives in the file name and ARP comments -->
+    <WintapChannel Condition="'$(WintapChannel)' == ''">alpha1</WintapChannel>
+    <PublishDir Condition="'$(PublishDir)' == ''">..\artifacts\publish\</PublishDir>
+    <DefineConstants>$(DefineConstants);WintapVersion=$(WintapVersion);WintapChannel=$(WintapChannel);PublishDir=$(PublishDir)</DefineConstants>
+    <SuppressIces>ICE61</SuppressIces> <!-- allows same-version upgrade during development; remove for release -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

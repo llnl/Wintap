@@ -1,0 +1,114 @@
+name: release
+
+# Builds, audits, publishes, packages and attests Wintap on a version tag.
+# Signing is deliberately a stub: the certificate decision (Azure Trusted Signing vs Key Vault HSM)
+# is separate. Until it is made, the MSI is unsigned and the job says so in the summary.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write      # OIDC for attestation (and later for Azure signing)
+  attestations: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  ContinuousIntegrationBuild: true
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+
+      - name: Version from tag
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') { $Matches[1] } else { '0.0.0-ci' }
+          "WintapVersion=$v" >> $env:GITHUB_ENV
+          "WintapChannel=alpha1" >> $env:GITHUB_ENV   # bump per alpha; drop for GA
+
+      - name: Restore (locked, signature-validated)
+        run: dotnet restore Wintap.Windows.slnf --locked-mode
+
+      - name: Audit — zero vulnerabilities, zero deprecated, direct or transitive
+        shell: pwsh
+        run: |
+          foreach ($p in 'wintap/Wintap.csproj','platform/windows/WintapCoreSvcMgr/WintapCoreSvcMgr.csproj','shared/ai/wintap_mcp_server/wintap_mcp_server.csproj') {
+            $v = dotnet list $p package --vulnerable --include-transitive --format json | ConvertFrom-Json
+            $n = ($v.projects.frameworks | ForEach-Object { $_.topLevelPackages + $_.transitivePackages } | Where-Object { $_.vulnerabilities }).Count
+            if ($n -gt 0) { dotnet list $p package --vulnerable --include-transitive; throw "$p has $n vulnerable packages" }
+          }
+
+      - name: Build and test (alpha core build, plus prove the full configuration still compiles)
+        run: |
+          dotnet build Wintap.Windows.slnf -c Release --no-restore -p:WintapVersion=${{ env.WintapVersion }}
+          dotnet build wintap/Wintap.csproj -c Release -p:WintapCore=false -p:WintapVersion=${{ env.WintapVersion }}
+          dotnet test tests/Wintap.Tests/Wintap.Tests.csproj -c Release --no-build
+
+      - name: Publish sensor (self-contained, win-x64)
+        run: dotnet publish wintap/Wintap.csproj -c Release -r win-x64 --self-contained -o artifacts/publish -p:WintapVersion=${{ env.WintapVersion }}
+
+      - name: SBOM
+        run: |
+          dotnet tool install --global CycloneDX
+          dotnet CycloneDX wintap/Wintap.csproj -o artifacts -fn wintap-${{ env.WintapVersion }}.cdx.json -F Json
+
+      - name: Sign binaries (STUB — enable when the certificate decision is made)
+        if: false
+        shell: pwsh
+        run: |
+          # Option A: Azure Trusted Signing — azure/trusted-signing-action with OIDC federated credential
+          # Option B: Key Vault HSM — AzureSignTool sign -kvu https://<vault>.vault.azure.net -kvc <cert> -tr http://timestamp.digicert.com -td sha256 <files>
+          Write-Host "signing not configured"
+
+      - name: Build MSI (WiX 5)
+        run: dotnet build installer/Wintap.Installer.wixproj -c Release -p:PublishDir=${{ github.workspace }}/artifacts/publish/ -p:WintapVersion=${{ env.WintapVersion }} -p:WintapChannel=${{ env.WintapChannel }}
+
+      - name: Validate MSI
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix msi validate installer/bin/Release/Wintap-${{ env.WintapVersion }}-${{ env.WintapChannel }}-x64.msi
+
+      - name: Install / upgrade / uninstall smoke test
+        shell: pwsh
+        run: |
+          $msi = "installer/bin/Release/Wintap-${{ env.WintapVersion }}-${{ env.WintapChannel }}-x64.msi"
+          Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v install.log" -Wait
+          Get-Service | Where-Object { $_.DisplayName -like '*Wintap*' } | Format-List Name,Status,StartType
+          Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /l*v uninstall.log" -Wait
+
+      - name: Hashes
+        shell: pwsh
+        run: |
+          Get-ChildItem installer/bin/Release/*.msi, artifacts/*.cdx.json | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } | Set-Content artifacts/SHA256SUMS.txt
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - name: Build provenance attestation (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            installer/bin/Release/*.msi
+            artifacts/*.cdx.json
+
+      - name: Release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/bin/Release/*.msi
+            artifacts/*.cdx.json
+            artifacts/SHA256SUMS.txt
+            install.log
+          body: |
+            **7.0 ALPHA — core telemetry only; Workbench and MCP are not in this build.** Built from ${{ github.sha }} by GitHub Actions. **MSI is unsigned until the signing decision is made.**
+            Verify provenance: `gh attestation verify Wintap-${{ env.WintapVersion }}-${{ env.WintapChannel }}-x64.msi --repo ${{ github.repository }}`

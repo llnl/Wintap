@@ -1,0 +1,13 @@
+{
+  "solution": {
+    "path": "Wintap.sln",
+    "projects": [
+      "wintap\\Wintap.csproj",
+      "platform\\windows\\WintapCoreSvcMgr\\WintapCoreSvcMgr.csproj",
+      "platform\\windows\\WintapRecorder\\WintapRecorder.csproj",
+      "shared\\ai\\wintap_mcp_server\\wintap_mcp_server.csproj",
+      "shared\\WintapAPI\\WintapAPI.csproj",
+      "tests\\Wintap.Tests\\Wintap.Tests.csproj"
+    ]
+  }
+}

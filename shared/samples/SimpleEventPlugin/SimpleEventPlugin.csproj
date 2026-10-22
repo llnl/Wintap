@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
@@ -11,10 +11,10 @@
 		<!-- Reference to the Wintap interfaces -->
 
 		<!-- Plugin-specific version of Newtonsoft.Json -->
-		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+		<PackageReference Include="Newtonsoft.Json" />
 
 		<!-- System.ComponentModel.Composition is required for MEF -->
-		<PackageReference Include="System.ComponentModel.Composition" Version="8.0.0" />
+		<PackageReference Include="System.ComponentModel.Composition" />
 	</ItemGroup>
 
 	<ItemGroup>
