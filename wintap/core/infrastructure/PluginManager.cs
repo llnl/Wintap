@@ -23,6 +23,7 @@ using com.espertech.esper.runtime.client;
 using com.espertech.esper.common.client;
 using System.Threading.Tasks;
 using System.Reflection;
+using System.Threading;
 
 namespace gov.llnl.wintap.core.infrastructure
 {
@@ -62,6 +63,7 @@ namespace gov.llnl.wintap.core.infrastructure
         private readonly HashSet<string> loadedPluginNames;
         private IsolatedPluginCatalog isolatedCatalog;
         private Watchdog watchdog;
+        private int etlStopped;
 
         // MEF container
         private CompositionContainer mefContainer;
@@ -235,6 +237,16 @@ namespace gov.llnl.wintap.core.infrastructure
             {
                 WintapLogger.Log.Append($"Error during plugin cleanup: {ex.Message}", LogLevel.Info);
             }
+        }
+
+        internal bool ShutdownEtl()
+        {
+            if (!doETL || etl == null || Interlocked.Exchange(ref etlStopped, 1) != 0)
+            {
+                return true;
+            }
+
+            return etl.Shutdown();
         }
 
         #endregion

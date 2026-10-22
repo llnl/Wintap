@@ -25,6 +25,7 @@ using System.Timers;
 using static gov.llnl.wintap.core.etl.shared.Utilities;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Diagnostics;
 
 
 namespace gov.llnl.wintap.core.etl.extract
@@ -269,6 +270,40 @@ namespace gov.llnl.wintap.core.etl.extract
             IsEnabled = false;
             // do we still need to do this?  sensors only stop when wintap stops now (no throttling)
             //esper.EPAdministrator.DestroyAllStatements();
+        }
+
+        /// <summary>
+        /// Stops scheduled drains, flushes every accepted row, and waits until
+        /// the asynchronous parquet writer has finalized its files.
+        /// Producers must be stopped before this method is called.
+        /// </summary>
+        internal bool Shutdown(TimeSpan timeout)
+        {
+            IsEnabled = false;
+            Stopwatch deadline = Stopwatch.StartNew();
+
+            flushToDiskTimer?.Stop();
+            flushToDiskTimer?.Dispose();
+            flushToDiskTimer = null;
+            flushWorker?.Dispose();
+            flushWorker = null;
+
+            while (Interlocked.Read(ref sensorDataDepth) > 0 && deadline.Elapsed < timeout)
+            {
+                if (!FlushToDisk("shutdown"))
+                {
+                    Thread.Sleep(10);
+                }
+            }
+
+            TimeSpan remaining = timeout - deadline.Elapsed;
+            bool queueDrained = Interlocked.Read(ref sensorDataDepth) == 0;
+            bool writerDrained = remaining > TimeSpan.Zero && parquetWriter.WaitForCompletion(remaining);
+            bool complete = queueDrained && writerDrained;
+            WintapLogger.Log.Append(
+                $"{SensorName}: serializer_shutdown complete={complete},remaining={Interlocked.Read(ref sensorDataDepth)},parquet_backlog={parquetWriter.Backlog},parquet_failures={parquetWriter.FailureCount},parquet_dropped_batches={parquetWriter.DroppedBatchCount},accepted_total={Interlocked.Read(ref acceptedEvents)},dropped_total={Interlocked.Read(ref droppedDueToBacklog)},elapsed_ms={deadline.ElapsedMilliseconds}",
+                complete ? LogLevel.Info : LogLevel.Warn);
+            return complete;
         }
         #endregion
 

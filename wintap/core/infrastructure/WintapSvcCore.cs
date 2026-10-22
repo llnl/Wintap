@@ -138,12 +138,17 @@ namespace gov.llnl.wintap
                 EventChannel.FlushPendingAttributionEvents();
                 SensorHealthMonitor.Default.Stop();
 
-                // Record shutdown metadata in registry
-                using (var wintapKey = Registry.LocalMachine.CreateSubKey(Env.RegistryRootPath))
+                // The shutdown registry marker is Windows-only. Attempting it
+                // on Linux aborts the surrounding shutdown sequence before
+                // collectors and ETL can drain.
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    wintapKey.SetValue("LastRestart", DateTime.Now, RegistryValueKind.String);
-                    wintapKey.SetValue("WatchdogRestart", Watchdog.PerformanceBreach, RegistryValueKind.DWord);
-                    wintapKey.Flush();
+                    using (var wintapKey = Registry.LocalMachine.CreateSubKey(Env.RegistryRootPath))
+                    {
+                        wintapKey.SetValue("LastRestart", DateTime.Now, RegistryValueKind.String);
+                        wintapKey.SetValue("WatchdogRestart", Watchdog.PerformanceBreach, RegistryValueKind.DWord);
+                        wintapKey.Flush();
+                    }
                 }
 
                 // Shutdown plugins (now async)
@@ -166,6 +171,13 @@ namespace gov.llnl.wintap
                 if (subscriptionMgr != null)
                 {
                     subscriptionMgr.Stop();
+                }
+
+                // All producers are now stopped. Drain serializer queues, wait
+                // for parquet finalization, then perform the final cache merge.
+                if (pluginMgr != null && !pluginMgr.ShutdownEtl())
+                {
+                    WintapLogger.Log.Append("ETL shutdown did not fully drain before its timeout.", LogLevel.Warn);
                 }
             }
             catch (Exception ex)

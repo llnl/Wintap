@@ -24,6 +24,7 @@ namespace gov.llnl.wintap.platform.linux.collect
         private System.Threading.CancellationTokenSource? _diagReporterCancel;
         private ProcessHash _pidHashGenerator;
         private List<IntPtr> _additionalLinks;
+        private readonly long _monotonicToRealtimeOffsetNs;
 
         protected override string BpfObjectFileName => "network_ops_tracer.bpf.o";
         protected override string[] FallbackBpfObjectFileNames => new[] { "network_tracepoint.bpf.o" };
@@ -34,6 +35,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             SensorName = "Network";
             _pidHashGenerator = new ProcessHash();
             _additionalLinks = new List<IntPtr>();
+            _monotonicToRealtimeOffsetNs = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
         }
 
         public override bool Start()
@@ -262,8 +264,11 @@ namespace gov.llnl.wintap.platform.linux.collect
                     ? WintapMessage.MessageTypeEnum.TcpConnection
                     : WintapMessage.MessageTypeEnum.UdpPacket;
 
+                DateTime eventTimeUtc = KernelTimestampConverter.ToUtcDateTime(
+                    evt.TimestampNs,
+                    _monotonicToRealtimeOffsetNs);
                 var message = new WintapMessage(
-                    DateTime.UtcNow,
+                    eventTimeUtc,
                     pid,
                     messageType
                 );

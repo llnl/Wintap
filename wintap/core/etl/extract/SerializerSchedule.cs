@@ -23,7 +23,10 @@ namespace gov.llnl.wintap.core.etl.extract
                 : file ? config.FileSerializationHighWaterEvents ?? 5000 : 0);
             return new ETLConfig.SerializerOptions
             {
-                UseDedicatedWorker = custom?.UseDedicatedWorker ?? registry,
+                // File and registry are the two burst-prone serializers. Their
+                // high-water drain must not compete with callback work for a
+                // ThreadPool slot after the bounded queue is already half full.
+                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || file),
                 IntervalSec = interval,
                 MaxQueueEvents = capacity,
                 HighWaterEvents = ResolveHighWaterEvents(highWater, capacity)

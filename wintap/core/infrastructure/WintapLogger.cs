@@ -124,12 +124,14 @@ namespace gov.llnl.wintap.core.infrastructure
     {
         private readonly ConcurrentQueue<LogEntry> _pendingEntries;
         private readonly BackgroundWorker _loggingThread;
+        private readonly ManualResetEventSlim _loggingStopped = new(false);
+        private readonly object _lifecycleLock = new();
 
         private readonly string _logPath;
         private readonly StreamWriter _logWriter;
         private LogLevel _verbosity;
         private readonly int _maxSize;
-        private bool _logIsOpen;
+        private volatile bool _logIsOpen;
 
         public string LogName { get; }
 
@@ -140,12 +142,18 @@ namespace gov.llnl.wintap.core.infrastructure
         }
 
         public ComponentLogger(string logName, LogType logType = LogType.Overwrite, LogLevel verbosity = LogLevel.Info, int maxSize = 3000000)
+            : this(logName, logType, verbosity, maxSize, null)
+        {
+        }
+
+        internal ComponentLogger(string logName, LogType logType, LogLevel verbosity, int maxSize, string logDirectory)
         {
             LogName = logName;
             _verbosity = verbosity;
             _maxSize = maxSize;
-            Directory.CreateDirectory(Paths.LogDataPath);
-            _logPath = Path.Combine(Paths.LogDataPath, logName + ".log");
+            logDirectory ??= Paths.LogDataPath;
+            Directory.CreateDirectory(logDirectory);
+            _logPath = Path.Combine(logDirectory, logName + ".log");
 
             _pendingEntries = new ConcurrentQueue<LogEntry>();
 
@@ -206,29 +214,57 @@ namespace gov.llnl.wintap.core.infrastructure
                 CallerInfo = $"{Path.GetFileNameWithoutExtension(file)}.{member}"
             };
 
-            _pendingEntries.Enqueue(logEntry);
+            lock (_lifecycleLock)
+            {
+                if (!_logIsOpen) return;
+                _pendingEntries.Enqueue(logEntry);
+            }
         }
 
         public void Close()
         {
-            _logIsOpen = false;
+            lock (_lifecycleLock)
+            {
+                if (!_logIsOpen) return;
+                _logIsOpen = false;
+            }
+            _loggingStopped.Wait();
             _logWriter.WriteLine("END OF LOG");
             _logWriter.Flush();
             _logWriter.Close();
+            _loggingStopped.Dispose();
         }
 
         private void LoggingThread_DoWork(object sender, DoWorkEventArgs e)
         {
-            while (_logIsOpen)
+            try
             {
-                while (_pendingEntries.TryDequeue(out var entry))
+                // Close switches off new steady-state waits, but every entry
+                // already accepted by Append must reach disk before the writer
+                // is closed.
+                while (_logIsOpen || !_pendingEntries.IsEmpty)
                 {
-                    string logLine = $"{entry.Time} [{entry.Level.ToString()}]  [{entry.CallerInfo}]:   {entry.Entry}";
-                    _logWriter.WriteLine(logLine);
-                    _logWriter.Flush();
-                }
+                    bool wrote = false;
+                    while (_pendingEntries.TryDequeue(out var entry))
+                    {
+                        string logLine = $"{entry.Time} [{entry.Level.ToString()}]  [{entry.CallerInfo}]:   {entry.Entry}";
+                        _logWriter.WriteLine(logLine);
+                        wrote = true;
+                    }
 
-                Thread.Sleep(200);
+                    if (wrote)
+                    {
+                        _logWriter.Flush();
+                    }
+                    else if (_logIsOpen)
+                    {
+                        Thread.Sleep(200);
+                    }
+                }
+            }
+            finally
+            {
+                _loggingStopped.Set();
             }
         }
     }

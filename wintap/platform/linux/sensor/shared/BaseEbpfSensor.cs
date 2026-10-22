@@ -253,8 +253,10 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
             catch { }
 
-            // Wait for polling thread
-            PollingThread?.Join(TimeSpan.FromSeconds(2));
+            // Native ring-buffer memory must not be freed while poll is still
+            // executing a callback. A timed join can expire under a burst and
+            // turn the cleanup below into a use-after-free/segfault.
+            WaitForThreadExit(PollingThread);
 
             // Allow subclass cleanup
             OnStopping();
@@ -262,6 +264,11 @@ namespace gov.llnl.wintap.platform.linux.collect
             CleanupBpfResources();
 
             WintapLogger.Log.Append($"{SensorName} sensor stopped", LogLevel.Info);
+        }
+
+        internal static void WaitForThreadExit(Thread thread)
+        {
+            thread?.Join();
         }
 
         private void CleanupBpfResources()

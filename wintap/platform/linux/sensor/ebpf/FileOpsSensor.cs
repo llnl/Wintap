@@ -118,6 +118,14 @@ namespace gov.llnl.wintap.platform.linux.collect
         private long _aggSummaryEnqueueFailures;
         private long _aggBytesClamped;
 
+        // Kernel event timestamp -> userspace ring-buffer callback latency.
+        // Keep fixed buckets so long captures can distinguish normal scheduling
+        // jitter from records retained in the ring for seconds or minutes.
+        private readonly long[] _deliveryLatencyBuckets = new long[7];
+        private long _deliveryLatencySamples;
+        private long _deliveryLatencyTotalNs;
+        private long _deliveryLatencyMaxNs;
+
         // P3: sampled sender-path cost (every Nth EventChannel.Send).
         private const int SendSampleInterval = 64;
         private long _sendSampleCounter;
@@ -157,7 +165,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             _sendQueueCapacity = GetConfiguredQueueCapacity();
             _sendQueue = new BlockingCollection<QueuedFileEvent>(new ConcurrentQueue<QueuedFileEvent>(), _sendQueueCapacity);
             _lowercasePaths = OperatingSystem.IsWindows();
-            _monotonicToRealtimeOffsetNs = ComputeMonotonicToRealtimeOffsetNs();
+            _monotonicToRealtimeOffsetNs = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
 
             try
             {
@@ -332,6 +340,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 uint bytes = ReadUInt32(data, isPathRecord ? PathRecordBytesOffset : FdRecordBytesOffset);
                 int dirfd = isPathRecord ? ReadInt32(data, PathRecordDirFdOffset) : 0;
                 ulong timestampNs = ReadUInt64(data, isPathRecord ? PathRecordTimestampOffset : FdRecordTimestampOffset);
+                RecordDeliveryLatency(timestampNs);
                 uint fileDev = ReadUInt32(data, isPathRecord ? PathRecordFileDevOffset : FdRecordFileDevOffset);
                 ulong fileIno = ReadUInt64(data, isPathRecord ? PathRecordFileInoOffset : FdRecordFileInoOffset);
                 uint dirDev = isPathRecord ? ReadUInt32(data, PathRecordDirDevOffset) : 0;
@@ -579,6 +588,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             string kernelSummary = BuildKernelCounterSummary();
             string policySummary = BuildPolicyCounterSummary();
             string measurementSummary = BuildAndResetMeasurementSummary();
+            string deliverySummary = BuildAndResetDeliveryLatencySummary();
             long relativeOpenResolvedViaDirIndex = Interlocked.Exchange(ref _relativeOpenResolvedViaDirIndex, 0);
             long relativeOpenDirIndexMisses = Interlocked.Exchange(ref _relativeOpenDirIndexMisses, 0);
             long relativeOpenMissProducerDead = Interlocked.Exchange(ref _relativeOpenMissProducerDead, 0);
@@ -653,8 +663,65 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
 
             WintapLogger.Log.Append(
-                $"{SensorName} counters (last ~60s): pseudo=/sys:{sys},/proc:{proc},/dev:{dev},total:{total} queue=[{queueSummary}] fd_cache=[pids={fdCachePidCount},entries={fdCacheEntryCount}] policy=[{policySummary}] agg=[{aggSummary}] sender=[{senderSummary}] user=[{userSummary}] resolve=[{resolutionSummary}] measure=[{measurementSummary}] kernel=[{kernelSummary}]",
+                $"{SensorName} counters (last ~60s): pseudo=/sys:{sys},/proc:{proc},/dev:{dev},total:{total} queue=[{queueSummary}] fd_cache=[pids={fdCachePidCount},entries={fdCacheEntryCount}] policy=[{policySummary}] agg=[{aggSummary}] sender=[{senderSummary}] delivery=[{deliverySummary}] user=[{userSummary}] resolve=[{resolutionSummary}] measure=[{measurementSummary}] kernel=[{kernelSummary}]",
                 LogLevel.Info);
+        }
+
+        private void RecordDeliveryLatency(ulong timestampNs)
+        {
+            long eventRealtimeNs;
+            long nowRealtimeNs;
+            try
+            {
+                eventRealtimeNs = checked((long)timestampNs + _monotonicToRealtimeOffsetNs);
+                nowRealtimeNs = checked((DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100L);
+            }
+            catch
+            {
+                return;
+            }
+
+            long latencyNs = Math.Max(0, nowRealtimeNs - eventRealtimeNs);
+            int bucket = latencyNs switch
+            {
+                <= 1_000_000L => 0,
+                <= 10_000_000L => 1,
+                <= 100_000_000L => 2,
+                <= 1_000_000_000L => 3,
+                <= 10_000_000_000L => 4,
+                <= 60_000_000_000L => 5,
+                _ => 6,
+            };
+
+            Interlocked.Increment(ref _deliveryLatencyBuckets[bucket]);
+            Interlocked.Increment(ref _deliveryLatencySamples);
+            Interlocked.Add(ref _deliveryLatencyTotalNs, latencyNs);
+
+            long observedMax = Interlocked.Read(ref _deliveryLatencyMaxNs);
+            while (latencyNs > observedMax)
+            {
+                long observed = Interlocked.CompareExchange(ref _deliveryLatencyMaxNs, latencyNs, observedMax);
+                if (observed == observedMax)
+                {
+                    break;
+                }
+                observedMax = observed;
+            }
+        }
+
+        private string BuildAndResetDeliveryLatencySummary()
+        {
+            long samples = Interlocked.Exchange(ref _deliveryLatencySamples, 0);
+            long totalNs = Interlocked.Exchange(ref _deliveryLatencyTotalNs, 0);
+            long maxNs = Interlocked.Exchange(ref _deliveryLatencyMaxNs, 0);
+            var buckets = new long[_deliveryLatencyBuckets.Length];
+            for (int i = 0; i < buckets.Length; i++)
+            {
+                buckets[i] = Interlocked.Exchange(ref _deliveryLatencyBuckets[i], 0);
+            }
+
+            long averageUs = samples > 0 ? totalNs / samples / 1_000L : 0;
+            return $"samples={samples},avg_us={averageUs},max_us={maxNs / 1_000L},le_1ms={buckets[0]},le_10ms={buckets[1]},le_100ms={buckets[2]},le_1s={buckets[3]},le_10s={buckets[4]},le_60s={buckets[5]},gt_60s={buckets[6]}";
         }
 
         private static uint ReadUInt32(IntPtr data, int offset)
@@ -1321,28 +1388,7 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         private DateTime ConvertKernelTimestampToUtcDateTime(ulong timestampNs)
         {
-            try
-            {
-                long realtimeNs = checked((long)timestampNs + _monotonicToRealtimeOffsetNs);
-                if (realtimeNs > 0)
-                {
-                    return DateTime.UnixEpoch.AddTicks(realtimeNs / 100).ToUniversalTime();
-                }
-            }
-            catch { }
-
-            return DateTime.UtcNow;
-        }
-
-        private static long ComputeMonotonicToRealtimeOffsetNs()
-        {
-            if (clock_gettime(CLOCK_REALTIME, out Timespec realtime) != 0 ||
-                clock_gettime(CLOCK_MONOTONIC, out Timespec monotonic) != 0)
-            {
-                return 0;
-            }
-
-            return realtime.ToNanoseconds() - monotonic.ToNanoseconds();
+            return KernelTimestampConverter.ToUtcDateTime(timestampNs, _monotonicToRealtimeOffsetNs);
         }
 
         private void InitializeStatsMap()
@@ -1651,7 +1697,9 @@ namespace gov.llnl.wintap.platform.linux.collect
             try
             {
                 _sendQueue.CompleteAdding();
-                _sendWorker?.Join(TimeSpan.FromSeconds(2));
+                // Every callback-accepted event must leave the sender queue
+                // before ETL begins its final serializer drain.
+                WaitForThreadExit(_sendWorker);
             }
             catch { }
 
@@ -1703,23 +1751,6 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
         }
 
-        private const int CLOCK_REALTIME = 0;
-        private const int CLOCK_MONOTONIC = 1;
-
-        [DllImport("libc", SetLastError = true)]
-        private static extern int clock_gettime(int clkId, out Timespec tp);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct Timespec
-        {
-            public long TvSec;
-            public long TvNsec;
-
-            public long ToNanoseconds()
-            {
-                return checked(TvSec * 1_000_000_000L + TvNsec);
-            }
-        }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]

@@ -22,6 +22,7 @@
          dependency-free helpers directly so their unit tests can run. -->
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsAggregator.cs" Link="FileOpsAggregator.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\DirIdentityIndex.cs" Link="DirIdentityIndex.cs" />
+    <Compile Include="..\..\wintap\platform\linux\sensor\shared\KernelTimestampConverter.cs" Link="KernelTimestampConverter.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsDenyPolicy.cs" Link="FileOpsDenyPolicy.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxPermissionDecoder.cs" Link="SELinuxPermissionDecoder.cs" />
     <Compile Include="..\..\wintap\platform\linux\sensor\ebpf\SELinuxSidResolver.cs" Link="SELinuxSidResolver.cs" />
@@ -31,6 +32,21 @@
 
   <ItemGroup>
     <Content Include="..\..\wintap\wintapstate.json" Link="wintapstate.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\wintap\platform\linux\sensor\ebpf\tracers\file_ops_tracer.bpf.c" Link="file_ops_tracer.bpf.c">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\wintap\platform\linux\sensor\ebpf\tracers\file_ops_tracepoint.bpf.c" Link="file_ops_tracepoint.bpf.c">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\wintap\platform\linux\sensor\shared\BaseEbpfSensor.cs" Link="BaseEbpfSensor.cs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\wintap\platform\linux\sensor\ebpf\FileOpsSensor.cs" Link="FileOpsSensor.cs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\wintap\platform\linux\sensor\ebpf\NetworkSensor.cs" Link="NetworkSensor.cs">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
