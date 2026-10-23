@@ -622,7 +622,7 @@
           "System.Management": "[10.0.13, )",
           "System.ServiceProcess.ServiceController": "[10.0.13, )",
           "TaskScheduler": "[2.12.2, )",
-          "WintapAPI": "[7.0.0, )"
+          "WintapAPI": "[7.0.0-local, )"
         }
       },
       "wintapapi": {
