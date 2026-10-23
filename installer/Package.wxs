@@ -51,8 +51,12 @@
     <Launch Condition="Installed OR (DOTNETHOSTVERSION &gt;&lt; &quot;10.&quot;)"
             Message="$(var.ProductName) requires the Microsoft .NET 10 Runtime (x64). Install it from https://dotnet.microsoft.com/download/dotnet/10.0 (the &quot;.NET Runtime&quot; package is sufficient; no SDK, no Desktop runtime) and run this installer again." />
 
+    <!-- MSI WindowsBuild can report a compatibility build; read the actual OS build. -->
+    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+      <RegistrySearch Id="WindowsCurrentBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
+    </Property>
     <!-- Require Windows 10 1809+ / Server 2019+ : .NET 10 and TraceEvent 4 floor -->
-    <Launch Condition="Installed OR (VersionNT >= 603 AND WindowsBuild >= 17763)"
+    <Launch Condition="Installed OR (VersionNT >= 603 AND WINDOWSBUILDNUMBER >= 17763)"
             Message="$(var.ProductName) requires Windows 10 version 1809 / Windows Server 2019 or later." />
 
     <StandardDirectory Id="ProgramFiles64Folder">
