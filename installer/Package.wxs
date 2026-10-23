@@ -2,8 +2,9 @@
 <!--
   Wintap 7 — WiX 5 package. Replaces platform\windows\WintapSetup\*.vdproj.
   PUBLISH: framework-dependent (requires .NET 10 runtime on the host; see the DOTNETHOSTVERSION launch condition).
-  SCOPE (Dave, 2026-10-22): the Wintap sensor service ONLY — the contents of `dotnet publish wintap\Wintap.csproj`,
-  which includes WintapAPI.dll and wintap_mcp_server.exe. WintapCoreSvcMgr and WintapRecorder are NOT packaged.
+  SCOPE (Dave, 2026-10-22, alpha = core telemetry only): the Wintap sensor service ONLY — the contents of
+  `dotnet publish wintap\Wintap.csproj` with WintapCore=true, which includes WintapAPI.dll and NO wintap_mcp_server.exe,
+  NO Workbench. WintapCoreSvcMgr and WintapRecorder are NOT packaged.
   AGENT: fill the three TODO values from the existing vdproj / service registration code before first build.
     - UpgradeCode: MUST equal the UpgradeCode of the shipped vdproj MSI if existing installs are to upgrade in place.
       Read it from WintapSetup.vdproj ("UpgradeCode" = "8:{...}") and paste it. If none is found, generate one ONCE and never change it.
@@ -16,9 +17,9 @@
 
   <?define ProductName = "Wintap" ?>
   <?define Manufacturer = "Lawrence Livermore National Laboratory" ?>
-  <?define ServiceName = "TODO-ServiceName" ?>
-  <?define ServiceDisplayName = "TODO-Wintap Host Sensor" ?>
-  <?define UpgradeCode = "TODO-{PASTE-FROM-vdproj-OR-GENERATE-ONCE}" ?>
+  <?define ServiceName = "Wintap" ?>
+  <?define ServiceDisplayName = "Wintap" ?>
+  <?define UpgradeCode = "{673CB19A-491A-4013-9C64-69573A0F8B4D}" ?>
 
   <Package Name="$(var.ProductName)"
            Manufacturer="$(var.Manufacturer)"
@@ -33,7 +34,7 @@
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <!-- Public properties for silent install:  msiexec /i Wintap-7.0.0-x64.msi /qn COLLECTOR_URL=https://... /l*v wintap-install.log -->
+    <!-- Public properties for silent install:  msiexec /i Wintap-7.0.1-alpha1-x64.msi /qn COLLECTOR_URL=https://... /l*v wintap-install.log -->
     <Property Id="COLLECTOR_URL" Secure="yes" />
     <Property Id="ARPPRODUCTICON" Value="WintapIcon" />
     <Property Id="ARPNOMODIFY" Value="1" />
