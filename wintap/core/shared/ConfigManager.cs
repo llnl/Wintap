@@ -11,6 +11,8 @@ namespace gov.llnl.wintap.core.shared
     public static class ConfigManager
     {
         private static ConfigRoot _config;
+        private static string loadedConfigPath;
+        private static readonly System.Collections.Generic.HashSet<string> configuredKeys = new(StringComparer.OrdinalIgnoreCase);
         private const string DefaultConfigPath = "wintap/wintap/core/etl/ETLConfig.json";
 
         static ConfigManager()
@@ -42,6 +44,9 @@ namespace gov.llnl.wintap.core.shared
                 try
                 {
                     string json = File.ReadAllText(configPath);
+                    using var document = JsonDocument.Parse(json);
+                    foreach (var property in document.RootElement.EnumerateObject()) configuredKeys.Add(property.Name);
+                    loadedConfigPath = configPath;
                     _config = JsonSerializer.Deserialize<ConfigRoot>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 }
                 catch
@@ -109,6 +114,19 @@ namespace gov.llnl.wintap.core.shared
             {
                 return default;
             }
+        }
+
+        public static string GetValueSource<T>(string key)
+        {
+            string direct = key.StartsWith("WINTAP_", StringComparison.OrdinalIgnoreCase) ? Environment.GetEnvironmentVariable(key) : null;
+            if (!string.IsNullOrEmpty(direct) && TryConvertFromString<T>(direct, out _)) return "environment:" + key;
+            var property = typeof(ConfigRoot).GetProperty(key, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                ?? typeof(ConfigRoot).GetProperty(MapEnvNameToProperty(key), BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (property == null) return "default";
+            string envName = ToWintapEnvName(property.Name);
+            string envValue = Environment.GetEnvironmentVariable(envName);
+            if (!string.IsNullOrEmpty(envValue) && TryConvertFromString<T>(envValue, out _)) return "environment:" + envName;
+            return configuredKeys.Contains(property.Name) ? "config:" + loadedConfigPath : "default";
         }
 
         private static bool TryConvertFromString<T>(string value, out T typed)

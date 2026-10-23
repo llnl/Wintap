@@ -65,7 +65,7 @@ int trace_process_fork(struct sched_fork_args *ctx)
         return 0;
     
     // Get parent process info
-    event->parent_pid = ctx->parent_pid;
+    event->parent_pid = bpf_get_current_pid_tgid() >> 32;
     
     // Get parent UID/GID
     __u64 uid_gid = bpf_get_current_uid_gid();
@@ -110,6 +110,25 @@ int trace_sys_enter_vfork(struct sys_enter_clone_args *ctx)
     // vfork has implicit flags; store a sentinel so the event isn't ambiguous.
     __u64 flags = 0xFFFFFFFFFFFFFFFFULL;
     bpf_map_update_elem(&clone_flags_map, &pid_tgid, &flags, BPF_ANY);
+    return 0;
+}
+
+// Tracepoint-only fallback: capture clone3 flags just as legacy clone flags.
+// If this auxiliary hook is unavailable, missing flags remain ambiguous.
+struct sys_enter_clone3_args {
+    unsigned long long unused;
+    long syscall_nr;
+    unsigned long args;
+    unsigned long size;
+};
+SEC("tracepoint/syscalls/sys_enter_clone3")
+int trace_sys_enter_clone3(struct sys_enter_clone3_args *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 flags = 0;
+    if (ctx->size >= sizeof(flags) &&
+        bpf_probe_read_user(&flags, sizeof(flags), (void *)ctx->args) == 0)
+        bpf_map_update_elem(&clone_flags_map, &pid_tgid, &flags, BPF_ANY);
     return 0;
 }
 

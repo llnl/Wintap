@@ -18,6 +18,7 @@ using System.Data;
 using System.Dynamic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace gov.llnl.wintap.core.etl.load
@@ -26,6 +27,9 @@ namespace gov.llnl.wintap.core.etl.load
     {
         private ConcurrentQueue<Batch> batches = new ConcurrentQueue<Batch>();  // complete collection of all sensor data awaiting serialization
         private readonly BackgroundWorker batchWorker;
+        private readonly ManualResetEventSlim drained = new(true);
+        private long pendingBatches;
+        private long writeFailures;
 
         // Bound memory usage if downstream IO falls behind.
         // 0 means unlimited (default).
@@ -65,6 +69,8 @@ namespace gov.llnl.wintap.core.etl.load
             }
 
             backlogDropPolicy = ParseDropPolicy(ConfigManager.GetValue<string>("WINTAP_PARQUET_BACKLOG_DROP_POLICY"));
+            RuntimeCapabilities.Setting("writer.maxBatchBacklog", maxBatchBacklog, "writer-effective");
+            RuntimeCapabilities.Setting("writer.dropPolicy", backlogDropPolicy.ToString(), "writer-effective");
 
             batchWorker = new BackgroundWorker();
             batchWorker.DoWork += BatchWorker_DoWork;
@@ -83,36 +89,44 @@ namespace gov.llnl.wintap.core.etl.load
                 while (batches.TryDequeue(out Batch batch))
                 {
                     didWork = true;
-
-                    while (batch.Set.TryDequeue(out Batch.SensorData dataSet))
+                    try
                     {
-                        string fileName = "NA";
-                        try
+                        while (batch.Set.TryDequeue(out Batch.SensorData dataSet))
                         {
-                            fileName = Write(dataSet).GetAwaiter().GetResult();
-                        }
-                        catch (Exception ex)
-                        {
-                            WintapLogger.Log.Append($"Error in ParquetWriter worker for {dataSet.SensorName}: {ex.Message}", LogLevel.Info);
-                        }
-
-                        if (fileName != "NA")
-                        {
+                            string fileName = "NA";
                             try
                             {
-                                FileInfo flushedFile = new FileInfo(fileName);
-                                flushedFile.MoveTo(flushedFile.FullName.Replace(".parquet.active", ".parquet"));
-                                WintapLogger.Log.Append($" ready for merge: {fileName}", LogLevel.Info);
+                                fileName = Write(dataSet).GetAwaiter().GetResult();
                             }
                             catch (Exception ex)
                             {
-                                WintapLogger.Log.Append($"ERROR renaming parquet for upload: {ex.Message}", LogLevel.Info);
+                                Interlocked.Increment(ref writeFailures);
+                                WintapLogger.Log.Append($"Error in ParquetWriter worker for {dataSet.SensorName}: {ex.Message}", LogLevel.Info);
+                            }
+
+                            if (fileName != "NA")
+                            {
+                                try
+                                {
+                                    FileInfo flushedFile = new FileInfo(fileName);
+                                    flushedFile.MoveTo(flushedFile.FullName.Replace(".parquet.active", ".parquet"));
+                                    WintapLogger.Log.Append($" ready for merge: {fileName}", LogLevel.Info);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Interlocked.Increment(ref writeFailures);
+                                    WintapLogger.Log.Append($"ERROR renaming parquet for upload: {ex.Message}", LogLevel.Info);
+                                }
+                            }
+                            else
+                            {
+                                WintapLogger.Log.Append($"{dataSet.SensorName}: Call to WRITE returned no parquet data file.", LogLevel.Info);
                             }
                         }
-                        else
-                        {
-                            WintapLogger.Log.Append($"{dataSet.SensorName}: Call to WRITE returned no parquet data file.", LogLevel.Info);
-                        }
+                    }
+                    finally
+                    {
+                        MarkBatchComplete();
                     }
                 }
 
@@ -126,6 +140,17 @@ namespace gov.llnl.wintap.core.etl.load
 
         internal int Backlog { get { return batches.Count; } }
 
+        internal bool WaitForCompletion(TimeSpan timeout)
+        {
+            return drained.Wait(timeout)
+                && Interlocked.Read(ref writeFailures) == 0
+                && Interlocked.Read(ref droppedBatches) == 0;
+        }
+
+        internal long FailureCount => Interlocked.Read(ref writeFailures);
+
+        internal long DroppedBatchCount => Interlocked.Read(ref droppedBatches);
+
         internal void Add(Batch batch)
         {
             if (maxBatchBacklog > 0 && batches.Count >= maxBatchBacklog)
@@ -135,17 +160,18 @@ namespace gov.llnl.wintap.core.etl.load
                     // Evict one oldest batch to make room.
                     if (batches.TryDequeue(out _))
                     {
-                        droppedBatches++;
+                        Interlocked.Increment(ref droppedBatches);
+                        MarkBatchComplete();
                     }
                     else
                     {
-                        droppedBatches++;
+                        Interlocked.Increment(ref droppedBatches);
                         // Nothing to evict; fall back to dropping newest below.
                         var now2 = DateTime.UtcNow;
                         if ((now2 - lastDropLogUtc).TotalSeconds >= 5)
                         {
                             lastDropLogUtc = now2;
-                            WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={droppedBatches}", LogLevel.Warn);
+                            WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={Interlocked.Read(ref droppedBatches)}", LogLevel.Warn);
                         }
                         return;
                     }
@@ -155,12 +181,12 @@ namespace gov.llnl.wintap.core.etl.load
                 else
                 {
                     // Drop newest batch
-                    droppedBatches++;
+                    Interlocked.Increment(ref droppedBatches);
                     var now = DateTime.UtcNow;
                     if ((now - lastDropLogUtc).TotalSeconds >= 5)
                     {
                         lastDropLogUtc = now;
-                        WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={droppedBatches}", LogLevel.Warn);
+                        WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={Interlocked.Read(ref droppedBatches)}", LogLevel.Warn);
                     }
                     return;
                 }
@@ -170,11 +196,21 @@ namespace gov.llnl.wintap.core.etl.load
                 if ((nowLog - lastDropLogUtc).TotalSeconds >= 5)
                 {
                     lastDropLogUtc = nowLog;
-                    WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={droppedBatches}", LogLevel.Warn);
+                    WintapLogger.Log.Append($"ParquetWriter backlog limit reached (max={maxBatchBacklog}, policy={backlogDropPolicy}). Dropping batches. dropped={Interlocked.Read(ref droppedBatches)}", LogLevel.Warn);
                 }
             }
 
+            drained.Reset();
+            Interlocked.Increment(ref pendingBatches);
             batches.Enqueue(batch);
+        }
+
+        private void MarkBatchComplete()
+        {
+            if (Interlocked.Decrement(ref pendingBatches) == 0)
+            {
+                drained.Set();
+            }
         }
 
         internal static CompressionMethod GetCompressionMethod()
@@ -253,7 +289,12 @@ namespace gov.llnl.wintap.core.etl.load
                     catch (Exception ex2)
                     {
                         WintapLogger.Log.Append($"{SensorName} error on retry of WRITE operation: {ex2.Message}", LogLevel.Info);
+                        throw new IOException("Parquet write retry failed.", ex2);
                     }
+                }
+                else
+                {
+                    throw;
                 }
             }
             return fileName;

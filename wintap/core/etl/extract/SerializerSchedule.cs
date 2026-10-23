@@ -24,9 +24,10 @@ namespace gov.llnl.wintap.core.etl.extract
                 : file ? config.FileSerializationHighWaterEvents ?? 5000 : snapshot ? 5000 : 0);
             return new ETLConfig.SerializerOptions
             {
-                // Memory-map snapshots arrive in bursts. Drain before the bounded
-                // queue fills, independently of the shared thread pool and timer.
-                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || snapshot),
+                // File, registry, and memory-map snapshot bursts drain on a
+                // dedicated worker instead of competing for shared ThreadPool
+                // capacity as their bounded queues approach the high-water mark.
+                UseDedicatedWorker = custom?.UseDedicatedWorker ?? (registry || file || snapshot),
                 IntervalSec = interval,
                 MaxQueueEvents = capacity,
                 HighWaterEvents = ResolveHighWaterEvents(highWater, capacity)

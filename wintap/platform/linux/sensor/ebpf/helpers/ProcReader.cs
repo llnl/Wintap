@@ -55,7 +55,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // /proc/<pid>/exe for executable path
                 ReadExe(procDir, ref info);
 
-                if (string.IsNullOrWhiteSpace(info.Username) && info.Uid > 0)
+                if (string.IsNullOrWhiteSpace(info.Username) && info.HasUid)
                 {
                     info.Username = LookupUsername(info.Uid);
                 }
@@ -66,6 +66,74 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
 
             return info;
+        }
+
+        /// <summary>
+        /// Converts a kernel monotonic/boot timestamp captured by an eBPF
+        /// lifecycle tracepoint to UTC. This is the fallback identity time when
+        /// the child has already exited and /proc is no longer available.
+        /// </summary>
+        internal static DateTime? TryConvertBootNsToUtc(ulong bootNs)
+        {
+            if (bootNs == 0) return null;
+            try
+            {
+                // /proc/<pid>/stat stores a start time in clock ticks, not
+                // nanoseconds. Quantize the eBPF timestamp to that same basis
+                // before hashing so Clone, Execve, and ProcessRundown describe
+                // one process identity rather than adjacent identities for a
+                // single PID.
+                long ticksPerSecond = GetClockTicksPerSecond();
+                ulong startTicks = checked((bootNs * (ulong)ticksPerSecond) / 1_000_000_000UL);
+                DateTime startUtc = GetBootTimeUtc().AddTicks(
+                    checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond)));
+                return NormalizeStartTimeUtc(startUtc);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Canonicalize Linux process start times to the nearest /proc clock
+        /// tick. Lifecycle sources can otherwise differ by one DateTime tick
+        /// (100 ns) at a clock-tick boundary and generate different PID hashes
+        /// for Clone, Execve, and rundown records describing one execution.
+        /// </summary>
+        internal static DateTime NormalizeStartTimeUtc(DateTime startTimeUtc)
+        {
+            return NormalizeStartTimeUtc(startTimeUtc, GetBootTimeUtc(), GetClockTicksPerSecond());
+        }
+
+        internal static DateTime NormalizeStartTimeUtc(
+            DateTime startTimeUtc,
+            DateTime bootTimeUtc,
+            long clockTicksPerSecond)
+        {
+            DateTime utc = startTimeUtc.ToUniversalTime();
+            DateTime bootUtc = bootTimeUtc.ToUniversalTime();
+            if (clockTicksPerSecond <= 0 || utc < bootUtc)
+            {
+                return utc;
+            }
+
+            try
+            {
+                ulong elapsedDateTimeTicks = checked((ulong)(utc - bootUtc).Ticks);
+                ulong clockTicks = checked(
+                    (elapsedDateTimeTicks * (ulong)clockTicksPerSecond +
+                     (ulong)TimeSpan.TicksPerSecond / 2UL) /
+                    (ulong)TimeSpan.TicksPerSecond);
+                long canonicalDateTimeTicks = checked((long)(
+                    clockTicks * (ulong)TimeSpan.TicksPerSecond /
+                    (ulong)clockTicksPerSecond));
+                return bootUtc.AddTicks(canonicalDateTimeTicks);
+            }
+            catch
+            {
+                return utc;
+            }
         }
 
         /// <summary>
@@ -173,7 +241,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                 {
                     var parts = line.Split(new[] { ':', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2 && uint.TryParse(parts[1], out uint uid))
+                    {
                         info.Uid = uid;
+                        info.HasUid = true;
+                    }
                 }
                 else if (line.StartsWith("Gid:"))
                 {
@@ -209,7 +280,11 @@ namespace gov.llnl.wintap.platform.linux.collect
             {
                 DateTime bootTimeUtc = GetBootTimeUtc();
                 long ticksPerSecond = GetClockTicksPerSecond();
-                info.StartTimeUtc = bootTimeUtc.AddSeconds(startTicks / (double)ticksPerSecond);
+                info.StartTimeUtc = NormalizeStartTimeUtc(
+                    bootTimeUtc.AddTicks(
+                        checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond))),
+                    bootTimeUtc,
+                    ticksPerSecond);
             }
         }
 
@@ -384,7 +459,13 @@ namespace gov.llnl.wintap.platform.linux.collect
             return cachedClockTicksPerSecond.Value;
         }
 
-        private static string LookupUsername(uint uid)
+        /// <summary>
+        /// Resolves a Linux UID using the local passwd file. eBPF lifecycle
+        /// records carry an effective UID even when the process exits before a
+        /// userspace /proc read can complete, so sensors use this as their
+        /// identity fallback.
+        /// </summary>
+        internal static string LookupUsername(uint uid)
         {
             lock (passwdLock)
             {
@@ -418,6 +499,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             public int PPid;
             public int SessionId;
             public uint Uid;
+            public bool HasUid;
             public uint Gid;
             public string Name;
             public DateTime StartTimeUtc;

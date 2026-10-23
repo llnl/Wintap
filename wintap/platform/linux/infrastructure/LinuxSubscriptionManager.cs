@@ -35,21 +35,36 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
                 string? enableEnv = Environment.GetEnvironmentVariable(compactEnvName);
                 if (string.IsNullOrWhiteSpace(enableEnv) && sensorKey == "ProcessRundown")
                 {
+                    compactEnvName = "WINTAP_ENABLE_PROCESS_RUNDOWN_SENSOR";
                     enableEnv = Environment.GetEnvironmentVariable("WINTAP_ENABLE_PROCESS_RUNDOWN_SENSOR");
                 }
 
                 if (!string.IsNullOrWhiteSpace(enableEnv))
                 {
-                    return enableEnv.Equals("1", StringComparison.OrdinalIgnoreCase) ||
-                           enableEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    bool enabled = enableEnv.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                                   enableEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    RuntimeCapabilities.Sensor(sensorKey, enabled, "environment:" + compactEnvName);
+                    return enabled;
                 }
 
-                return ConfigManager.GetValue<bool>(sensorKey);
+                bool configured = ConfigManager.GetValue<bool>(sensorKey);
+                RuntimeCapabilities.Sensor(sensorKey, configured, ConfigManager.GetValueSource<bool>(sensorKey));
+                return configured;
             }
 
-            void TryStart(BaseSensor sensor)
+            void TryStart(BaseSensor sensor, string key)
             {
-                if (sensor.Start())
+                bool started;
+                try { started = sensor.Start(); }
+                catch (Exception ex)
+                {
+                    RuntimeCapabilities.Finished(key, false, ex.GetType().Name);
+                    WintapLogger.Log.Append($"{sensor.SensorName} start threw: {ex.Message}", LogLevel.Warn);
+                    return;
+                }
+                RuntimeCapabilities.Finished(key, started);
+                WintapLogger.Log.Append("SENSOR_CAPABILITIES " + RuntimeCapabilities.GetSensorJson(key), LogLevel.Info);
+                if (started)
                 {
                     baseSensors.Add(sensor);
                     WintapLogger.Log.Append($"{sensor.SensorName} sensor registered", LogLevel.Info);
@@ -63,7 +78,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("Execve"))
             {
                 ExecveSensor execveSensor = new ExecveSensor();
-                TryStart(execveSensor);
+                TryStart(execveSensor, "Execve");
             }
             else
             {
@@ -73,7 +88,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("Clone"))
             {
                 CloneSensor cloneSensor = new CloneSensor();
-                TryStart(cloneSensor);
+                TryStart(cloneSensor, "Clone");
             }
             else
             {
@@ -83,7 +98,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("Exit"))
             {
                 ExitSensor exitSensor = new ExitSensor();
-                TryStart(exitSensor);
+                TryStart(exitSensor, "Exit");
             }
             else
             {
@@ -93,7 +108,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("Network"))
             {
                 NetworkSensor networkSensor = new NetworkSensor();
-                TryStart(networkSensor);
+                TryStart(networkSensor, "Network");
             }
             else
             {
@@ -103,7 +118,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("FileOps"))
             {
                 FileOpsSensor fileOpsSensor = new FileOpsSensor();
-                TryStart(fileOpsSensor);
+                TryStart(fileOpsSensor, "FileOps");
             }
             else
             {
@@ -113,7 +128,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("SELinux"))
             {
                 SELinuxSensor selinuxSensor = new SELinuxSensor();
-                TryStart(selinuxSensor);
+                TryStart(selinuxSensor, "SELinux");
             }
             else
             {
@@ -123,7 +138,7 @@ namespace gov.llnl.wintap.platform.linux.infrastructure
             if (IsEnabled("ProcessRundown"))
             {
                 ProcessRundownSensor processRundownSensor = new ProcessRundownSensor();
-                TryStart(processRundownSensor);
+                TryStart(processRundownSensor, "ProcessRundown");
             }
             else
             {

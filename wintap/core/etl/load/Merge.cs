@@ -17,7 +17,7 @@ namespace gov.llnl.wintap.core.etl.load
         private static string sensorName;
         private static DateTime mergeTime;
 
-        internal void Start(string[] args)
+        internal bool Start(string[] args)
         {
             // CHECK AND PROCESS INPUTS
             try
@@ -27,10 +27,11 @@ namespace gov.llnl.wintap.core.etl.load
             catch (Exception ex)
             {
                 WintapLogger.Log.Append("Could not start merge: " + ex.Message, LogLevel.Info);
-                return;
+                return false;
             }
 
             // MERGE PARQUET
+            bool mergeSucceeded = true;
             try
             {
                 if (parquetSearchRoot.EndsWith("defaultserializer") || parquetSearchRoot.EndsWith("selinuxserializer"))
@@ -60,6 +61,7 @@ namespace gov.llnl.wintap.core.etl.load
                             }
                             catch(Exception ex)
                             {
+                                mergeSucceeded = false;
                                 WintapLogger.Log.Append($"Could not merge for serializer type {defaultMergeType}: {ex.Message}", LogLevel.Error);
                             }
                             
@@ -78,10 +80,15 @@ namespace gov.llnl.wintap.core.etl.load
             }
             catch (Exception ex)
             {
+                mergeSucceeded = false;
                 WintapLogger.Log.Append("Error in duckdb merge for: " + sensorName + " msg: " + ex.Message, LogLevel.Info);
             }
 
-
+            if (!mergeSucceeded)
+            {
+                WintapLogger.Log.Append($"Merge failed for {parquetSearchRoot}; retaining source parquet for retry.", LogLevel.Warn);
+                return false;
+            }
 
             foreach(FileInfo mergedParquet in new DirectoryInfo(parquetSearchRoot).GetFiles("*.parquet"))
             {
@@ -89,6 +96,7 @@ namespace gov.llnl.wintap.core.etl.load
             }
 
             WintapLogger.Log.Append("Merge and cleanup complete!", LogLevel.Info);
+            return true;
         }
 
         private static string renameSensor(string _sensorName)
