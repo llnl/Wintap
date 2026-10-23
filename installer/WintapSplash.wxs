@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <Binary Id="WintapSplashBitmap" SourceFile="assets\WintapSplash.bmp" />
+    <UI>
+      <Dialog Id="WintapSplashDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="yes" Text="WintapSplashBitmap" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+      </Dialog>
+      <InstallUISequence>
+        <!-- Enter the standard wizard from the splash; do not show Welcome twice when the wizard returns. -->
+        <Show Dialog="WintapSplashDlg" Before="WelcomeDlg" Condition="NOT Installed" />
+        <Show Dialog="override WelcomeDlg" Before="ProgressDlg" Condition="Installed AND PATCH" />
+      </InstallUISequence>
+    </UI>
+  </Fragment>
+</Wix>
