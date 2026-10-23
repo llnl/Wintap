@@ -37,7 +37,7 @@
     <!-- Public properties for silent install:  msiexec /i Wintap-7.0.1-alpha1-x64.msi /qn COLLECTOR_URL=https://... /l*v wintap-install.log -->
     <Property Id="COLLECTOR_URL" Secure="yes" />
     <Property Id="ARPPRODUCTICON" Value="WintapIcon" />
-    <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- WixUI_InstallDir already defines ARPNOMODIFY=1. -->
     <Property Id="ARPCOMMENTS" Value="Wintap $(var.WintapVersion) $(var.WintapChannel) — core telemetry collection only; Workbench and MCP are not included in this build. Requires the Microsoft .NET 10 Runtime (x64), serviced by Windows Update / WSUS." />
     <Icon Id="WintapIcon" SourceFile="$(var.PublishDir)Wintap.exe" />
 
