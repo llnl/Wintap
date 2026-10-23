@@ -100,7 +100,7 @@ namespace Wintap.Tests
             await ParquetSerializer.SerializeAsync(new[] { new HostData { RuntimeCapabilitiesJson = json } }, stream);
             stream.Position = 0;
             var rows = await ParquetSerializer.DeserializeAsync<HostData>(stream);
-            Assert.Equal(json, Assert.Single(rows).RuntimeCapabilitiesJson);
+            Assert.Equal(json, Assert.Single(rows.Data).RuntimeCapabilitiesJson);
         }
 
         [Fact]

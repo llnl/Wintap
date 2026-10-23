@@ -216,6 +216,13 @@ namespace gov.llnl.wintap.core.etl.load.adapters
             if (!string.IsNullOrWhiteSpace(serviceUrl))
             {
                 config.ServiceURL = serviceUrl;
+                if (Uri.TryCreate(serviceUrl, UriKind.Absolute, out var endpointUri) &&
+                    !endpointUri.Host.Equals("amazonaws.com", StringComparison.OrdinalIgnoreCase) &&
+                    !endpointUri.Host.EndsWith(".amazonaws.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    config.RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED;
+                    config.ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED;
+                }
                 WintapLogger.Log.Append("Using S3 service URL: " + serviceUrl, LogLevel.Info);
 
                 if (!string.IsNullOrWhiteSpace(regionEndpoint))
@@ -243,7 +250,8 @@ namespace gov.llnl.wintap.core.etl.load.adapters
                 try
                 {
                     var uri = new Uri(serviceUrl);
-                    bool isAwsHost = uri.Host.EndsWith("amazonaws.com", StringComparison.OrdinalIgnoreCase);
+                    bool isAwsHost = uri.Host.Equals("amazonaws.com", StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host.EndsWith(".amazonaws.com", StringComparison.OrdinalIgnoreCase);
                     if (!isAwsHost)
                     {
                         config.ForcePathStyle = true;

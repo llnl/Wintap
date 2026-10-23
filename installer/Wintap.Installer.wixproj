@@ -1,0 +1,29 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!--
+    Wintap 7 MSI. Build:
+      dotnet publish ..\wintap\Wintap.csproj -c Release -r win-x64 /p:SelfContained=false -o ..\artifacts\publish   (framework-dependent, decision 2026-10-22)
+      dotnet build  Wintap.Installer.wixproj -c Release -p:PublishDir=..\artifacts\publish\ -p:WintapBuild=1 -p:WintapChannel=alpha1
+    Output: bin\Release\Wintap-7.0.1-alpha1-x64.msi
+    VERSIONING (2026-10-23): ProductVersion = 7.0.<WintapBuild>; the counter is monotonic (alpha1=1 … GA=100), so every
+    MSI out-ranks the last and MajorUpgrade needs no same-version allowance. WintapBuild=0 is a local, un-upgradeable build.
+  -->
+  <PropertyGroup>
+    <OutputName>Wintap-$(WintapVersion)-$(WintapChannel)-x64</OutputName>
+    <OutputType>Package</OutputType>
+    <!-- Installer tooling keeps its existing WiX pins; sensor CPM remains unchanged. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DebugType>full</DebugType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <WintapLine>7.0</WintapLine>
+    <WintapBuild Condition="'$(WintapBuild)' == ''">0</WintapBuild>
+    <WintapVersion Condition="'$(WintapVersion)' == ''">$(WintapLine).$(WintapBuild)</WintapVersion>
+    <!-- MSI ProductVersion must be numeric; the channel lives in the file name and ARP comments -->
+    <WintapChannel Condition="'$(WintapChannel)' == ''">alpha1</WintapChannel>
+    <PublishDir Condition="'$(PublishDir)' == ''">..\artifacts\publish\</PublishDir>
+    <DefineConstants>$(DefineConstants);WintapVersion=$(WintapVersion);WintapChannel=$(WintapChannel);PublishDir=$(PublishDir)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

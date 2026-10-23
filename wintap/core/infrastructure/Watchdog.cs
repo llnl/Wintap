@@ -5,7 +5,7 @@
  */
 
 using gov.llnl.wintap.collect.models;
-using gov.llnl.wintap.core.api;
+
 using gov.llnl.wintap.core.shared;
 using Microsoft.Win32;
 using System;

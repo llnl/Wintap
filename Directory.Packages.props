@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Central Package Management for Wintap 7. Every PackageReference in the repo takes its version
+  from here; csproj files carry no Version= attribute. Pins chosen 2026-10-22 per
+  projects/axon-aegis/wintap-build/2026-10-22-dependency-plan.md:
+    - latest stable >= 14 days old, except Microsoft author-signed packages (latest stable)
+    - no pre-release anywhere
+  Change a version here, run `dotnet restore -\-force-evaluate` to refresh packages.lock.json, commit both.
+-->
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <!-- ===== Microsoft runtime-family packages: one version, moved together on Patch Tuesday ===== -->
+  <PropertyGroup>
+    <DotNetServicingVersion>10.0.13</DotNetServicingVersion>
+  </PropertyGroup>
+  <ItemGroup Label="Microsoft .NET 10 servicing line">
+    <PackageVersion Include="Microsoft.Extensions.Hosting"                 Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Systemd"         Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.Management"                            Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.ServiceProcess.ServiceController"      Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.Diagnostics.PerformanceCounter"        Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.Diagnostics.EventLog"                  Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.Configuration.ConfigurationManager"    Version="$(DotNetServicingVersion)" />
+    <PackageVersion Include="System.ComponentModel.Composition"            Version="$(DotNetServicingVersion)" />
+  </ItemGroup>
+
+  <!-- ===== Sensor core ===== -->
+  <ItemGroup Label="Sensor core">
+    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />   <!-- MS author-signed; kernel payload bounds validation. Win10+ only. -->
+    <PackageVersion Include="TaskScheduler"                             Version="2.12.2" />  <!-- watch -->
+    <PackageVersion Include="NEsper.Runtime"                            Version="8.9.1" />   <!-- watch: brings Castle, Common.Logging, Crc32.NET, Roslyn -->
+    <PackageVersion Include="NEsper.Compiler"                           Version="8.9.1" />
+    <PackageVersion Include="NEsper.Compat"                             Version="8.9.1" />
+    <PackageVersion Include="DuckDB.NET.Data.Full"                      Version="1.5.6" />   <!-- 1.5.6.1 too new on 2026-10-22; watch -->
+    <PackageVersion Include="Parquet.Net"                               Version="6.1.0" />   <!-- major jump from 4.24; watch -->
+    <PackageVersion Include="AWSSDK.S3"                                 Version="4.0.104" /> <!-- v4: set WHEN_REQUIRED checksums for S3-compatible stores -->
+    <PackageVersion Include="Newtonsoft.Json"                           Version="13.0.4" />  <!-- transitional; STJ later -->
+  </ItemGroup>
+
+  <!-- ===== In-process LLM / MCP — FULL PRODUCT ONLY. Not referenced when WintapCore=true (7.0 alpha).
+       Pinned at the versions the code compiles against TODAY so the full configuration keeps building unchanged.
+       Migration to Microsoft.Extensions.AI 10.10.x / AI.OpenAI 10.10.1 / ModelContextProtocol 2.2.0 is the
+       next release's work (plan §4.5–4.6). The pre-release ban applies to what ships; these do not ship in the alpha. ===== -->
+  <ItemGroup Label="AI and MCP (deferred to the Workbench/MCP release)">
+    <PackageVersion Include="Microsoft.Extensions.AI"        Version="9.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.8.0-preview.1.25412.6" />
+    <PackageVersion Include="ModelContextProtocol"           Version="0.2.0-preview.3" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Ollama" Version="9.7.0-preview.1.25356.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.SpaServices.Extensions" Version="8.0.32" />
+  </ItemGroup>
+
+  <!-- ===== Tests (not shipped) ===== -->
+  <ItemGroup Label="Test only">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk"        Version="17.14.1" />
+    <PackageVersion Include="xunit"                         Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio"     Version="3.1.1" />
+  </ItemGroup>
+
+  <!--
+    Deliberately ABSENT (do not add back without a note in the plan):
+    Anthropic.SDK, Microsoft.SemanticKernel.*, Microsoft.Extensions.AI.Ollama, BouncyCastle.Cryptography,
+    SharpPcap, PacketDotNet, Castle.Windsor, Common.Logging(.Core), Crc32.NET, XLR8.CGLib,
+    Microsoft.AspNet.WebApi.*, Microsoft.AspNetCore.SpaServices.Extensions, Microsoft.AspNetCore.SystemWebAdapters,
+    Microsoft.AspNetCore.* (shared framework), Microsoft.OpenApi, Newtonsoft.Json.Bson, System.Linq.Async,
+    System.ServiceModel.*, Microsoft.DotNet.PlatformAbstractions, Microsoft.NETCore.Portable.Compatibility,
+    Microsoft.Windows.Compatibility, and every System.*/Microsoft.Extensions.* that net10 provides in-box.
+  -->
+</Project>
