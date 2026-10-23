@@ -15,7 +15,7 @@
       </Dialog>
       <InstallUISequence>
         <!-- Enter the standard wizard from the splash; do not show Welcome twice when the wizard returns. -->
-        <Show Dialog="WintapSplashDlg" Before="WelcomeDlg" Condition="NOT Installed" />
+        <Show Dialog="WintapSplashDlg" After="CostFinalize" Condition="NOT Installed" />
         <Show Dialog="override WelcomeDlg" Before="ProgressDlg" Condition="Installed AND PATCH" />
       </InstallUISequence>
     </UI>
