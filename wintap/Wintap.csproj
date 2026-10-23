@@ -21,7 +21,7 @@
     <DefineConstants Condition="'$(WintapCore)' == 'true'">$(DefineConstants);WINTAP_CORE</DefineConstants>
     <UseCommonOutputDirectory>false</UseCommonOutputDirectory>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <!-- Publish shape for the MSI: self-contained, single directory, ReadyToRun. Trimming OFF:
          NEsper compiles EPL with Roslyn at runtime and MEF loads plugins by reflection. -->
     <PublishReadyToRun>false</PublishReadyToRun>
