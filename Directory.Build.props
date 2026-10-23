@@ -29,11 +29,22 @@
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <DebugType>portable</DebugType>
-    <!-- One version for the product; bump here only -->
-    <WintapVersion Condition="'$(WintapVersion)' == ''">7.0.0</WintapVersion>
-    <Version>$(WintapVersion)</Version>
+    <!-- VERSIONING (Dave, 2026-10-23). Three fields, three jobs:
+           AssemblyVersion      7.0.0.0 — frozen for the whole 7.0 line (binding identity; never churn).
+           InformationalVersion SemVer  — 7.0.0-alpha.1+<sha>; SourceLink appends the commit. Human truth.
+           FileVersion / MSI ProductVersion = 7.0.<build>  — WintapBuild is a monotonic counter: alpha1=1, alpha2=2,
+                                    RC=9x, GA=100, GA patches 101+. Every MSI out-ranks the last, so MajorUpgrade works.
+         Local builds are UNNUMBERED (WintapBuild=0 → 7.0.0.0, label "local"); real numbers come only from a release
+         tag or an explicit -p:WintapBuild=N -p:WintapPrerelease=alpha.1 on the command line. Nobody hand-bumps here. -->
+    <WintapLine>7.0</WintapLine>
+    <WintapBuild Condition="'$(WintapBuild)' == ''">0</WintapBuild>
+    <WintapPrerelease Condition="'$(WintapPrerelease)' == '' and '$(WintapBuild)' == '0'">local</WintapPrerelease>
+    <WintapVersion Condition="'$(WintapVersion)' == ''">$(WintapLine).$(WintapBuild)</WintapVersion>
+    <VersionPrefix>$(WintapLine).0</VersionPrefix>
+    <VersionSuffix>$(WintapPrerelease)</VersionSuffix>
     <AssemblyVersion>7.0.0.0</AssemblyVersion>
     <FileVersion>$(WintapVersion).0</FileVersion>
+    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
     <Company>Lawrence Livermore National Laboratory</Company>
     <Product>Wintap</Product>
     <Copyright>Copyright 2026 Lawrence Livermore National Security, LLC</Copyright>
