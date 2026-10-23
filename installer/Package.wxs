@@ -110,6 +110,7 @@
     </Component>
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="assets\WintapLicense.rtf" />
     <UIRef Id="WintapSplashUI" />
   </Package>
 </Wix>
