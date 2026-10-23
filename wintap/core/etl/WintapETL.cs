@@ -87,12 +87,30 @@ namespace gov.llnl.wintap.core.etl
         }
 
 
-        public void Shutdown()
+        public bool Shutdown()
         {
-            cacheMgr.Stop();
-            processSensor.Stop();
-            WintapLogger.Log.Append("shutdown complete", LogLevel.Info);
-            WintapLogger.Log.Close();
+            bool complete = true;
+            TimeSpan serializerTimeout = TimeSpan.FromMinutes(2);
+
+            if (sensors != null)
+            {
+                foreach (Serializer sensor in sensors)
+                {
+                    sensor.Stop();
+                }
+                foreach (Serializer sensor in sensors)
+                {
+                    complete &= sensor.Shutdown(serializerTimeout);
+                }
+            }
+
+            if (cacheMgr != null)
+            {
+                complete &= cacheMgr.Stop(TimeSpan.FromMinutes(2));
+            }
+
+            WintapLogger.Log.Append($"ETL shutdown complete={complete}", complete ? LogLevel.Info : LogLevel.Warn);
+            return complete;
         }
 
         #endregion

@@ -18,18 +18,20 @@ using System.Dynamic;
 using System.IO;
 using System.Linq;
 using System.Timers;
+using System.Threading;
 
 namespace gov.llnl.wintap.core.etl.load
 {
     internal class CacheManager
     {
         private BackgroundWorker uploaderThread;
-        private bool svcRunning;
+        private volatile bool svcRunning;
         private DirectoryInfo cacheDir;
         private long bytesOnDisk;
         private int mergeHelperPid;
         private List<IUpload> uploaders;
         private BackgroundWorker workerThread;
+        private readonly ManualResetEventSlim workerStopped = new(false);
 
         internal ETLConfig etlConfig;
         internal static ConcurrentQueue<dynamic> SendQueue;
@@ -270,11 +272,22 @@ namespace gov.llnl.wintap.core.etl.load
             workerThread.RunWorkerAsync();
         }
 
-        internal void Stop()
+        internal bool Stop(TimeSpan timeout)
         {
             svcRunning = false;
-            System.Threading.Thread.Sleep(2000); // allow sender loop to exit
+            if (workerThread.IsBusy && !workerStopped.Wait(timeout))
+            {
+                WintapLogger.Log.Append("CacheManager shutdown timed out waiting for its worker; final merge was not started.", LogLevel.Warn);
+                return false;
+            }
+
+            // Serializers have finalized their parquet files before this call.
+            // Materialize one final cross-stream snapshot instead of waiting for
+            // the next periodic upload interval.
+            bool mergeComplete = doMerge();
             cleanup();
+            WintapLogger.Log.Append($"CacheManager final merge complete={mergeComplete}.", mergeComplete ? LogLevel.Info : LogLevel.Warn);
+            return mergeComplete;
         }
 
         private void WorkerThread_DoWork(object sender, DoWorkEventArgs e)
@@ -282,62 +295,69 @@ namespace gov.llnl.wintap.core.etl.load
             WintapLogger.Log.Append("uploader thread is running", LogLevel.Info);
             Stopwatch uploadTimer = new Stopwatch();
             uploadTimer.Restart();
-            while (svcRunning)
+            try
             {
-                if (uploadTimer.Elapsed.TotalSeconds > etlConfig.UploadIntervalSec)
+                while (svcRunning)
                 {
-                    var cycleTimer = Stopwatch.StartNew();
-                    doMerge();
-                    List<RawSensorCacheFile> rawSensorFiles = getRawSensorParquetFiles();
-                    long mergeElapsedMs = cycleTimer.ElapsedMilliseconds;
-                    int rawSensorFileCount = rawSensorFiles.Count;
-                    long rawSensorBytes = rawSensorFiles.Sum(file => file.Length);
-                    if (rawSensorFiles.Count > 0)
+                    if (uploadTimer.Elapsed.TotalSeconds > etlConfig.UploadIntervalSec)
                     {
-                        WintapLogger.Log.Append("upload worker is awake and processing: " + cacheDir.FullName, LogLevel.Info);
-                        try
+                        var cycleTimer = Stopwatch.StartNew();
+                        doMerge();
+                        List<RawSensorCacheFile> rawSensorFiles = getRawSensorParquetFiles();
+                        long mergeElapsedMs = cycleTimer.ElapsedMilliseconds;
+                        int rawSensorFileCount = rawSensorFiles.Count;
+                        long rawSensorBytes = rawSensorFiles.Sum(file => file.Length);
+                        if (rawSensorFiles.Count > 0)
                         {
-                            rawSensorFiles = pruneCache(rawSensorFiles);
-                        }
-                        catch (Exception ex)
-                        {
-                            WintapLogger.Log.Append("error cleaning up cache files: " + ex.Message, LogLevel.Warn);
-                        }
-                        foreach (IUpload uploader in uploaders)
-                        {
-                            WintapLogger.Log.Append("Calling pre-upload method on: " + uploader.Name, LogLevel.Info);
+                            WintapLogger.Log.Append("upload worker is awake and processing: " + cacheDir.FullName, LogLevel.Info);
                             try
                             {
-                                uploader.PreUpload(getUploaderParameters(uploader));
+                                rawSensorFiles = pruneCache(rawSensorFiles);
                             }
                             catch (Exception ex)
                             {
-                                WintapLogger.Log.Append($"ERROR in preUpload for {uploader.Name}: {ex.Message}", LogLevel.Info);
+                                WintapLogger.Log.Append("error cleaning up cache files: " + ex.Message, LogLevel.Warn);
+                            }
+                            foreach (IUpload uploader in uploaders)
+                            {
+                                WintapLogger.Log.Append("Calling pre-upload method on: " + uploader.Name, LogLevel.Info);
+                                try
+                                {
+                                    uploader.PreUpload(getUploaderParameters(uploader));
+                                }
+                                catch (Exception ex)
+                                {
+                                    WintapLogger.Log.Append($"ERROR in preUpload for {uploader.Name}: {ex.Message}", LogLevel.Info);
+                                }
+                            }
+                            upload(rawSensorFiles);
+                            foreach (IUpload uploader in uploaders)
+                            {
+                                try
+                                {
+                                    uploader.PostUpload();
+                                }
+                                catch (Exception ex)
+                                {
+                                    WintapLogger.Log.Append($"ERROR in PostUpload for {uploader.Name}: {ex.Message}", LogLevel.Warn);
+                                }
                             }
                         }
-                        upload(rawSensorFiles);
-                        foreach (IUpload uploader in uploaders)
-                        {
-                            try
-                            {
-                                uploader.PostUpload();
-                            }
-                            catch (Exception ex)
-                            {
-                                WintapLogger.Log.Append($"ERROR in PostUpload for {uploader.Name}: {ex.Message}", LogLevel.Warn);
-                            }
-                        }
+                        WintapLogger.Log.Append(
+                            $"CacheManager cycle metrics: files={rawSensorFileCount},bytes={rawSensorBytes},merge_ms={mergeElapsedMs},total_ms={cycleTimer.ElapsedMilliseconds}",
+                            LogLevel.Info);
+                        uploadTimer.Restart();
                     }
-                    WintapLogger.Log.Append(
-                        $"CacheManager cycle metrics: files={rawSensorFileCount},bytes={rawSensorBytes},merge_ms={mergeElapsedMs},total_ms={cycleTimer.ElapsedMilliseconds}",
-                        LogLevel.Info);
-                    uploadTimer.Restart();
+                    if (DateTime.Now.Minute == 0 && DateTime.Now.Second < 2)  // only once at the top of the hour
+                    {
+                        createMetaRecords();  // host, macip
+                    }
+                    System.Threading.Thread.Sleep(1000);
                 }
-                if (DateTime.Now.Minute == 0 && DateTime.Now.Second < 2)  // only once at the top of the hour
-                {
-                    createMetaRecords();  // host, macip
-                }
-                System.Threading.Thread.Sleep(1000);
+            }
+            finally
+            {
+                workerStopped.Set();
             }
         }
 
@@ -449,15 +469,17 @@ namespace gov.llnl.wintap.core.etl.load
                 }
             }
 
-            if (genHost) { HostSerializer.Instance.WriteHostRecord(); }
+            // Startup writes a fresh receipt even when previous HOST files exist.
+            if (genHost && RuntimeCapabilities.IsComplete) { HostSerializer.Instance.WriteHostRecord(); }
             if (genMacIp) { HostSerializer.Instance.WriteMacIPRecords(); }
         }
 
         /// Running external program to do the merging to avoid parquet schema stickiness  
-        private void doMerge()
+        private bool doMerge()
         {
             DateTime mergeTime = DateTime.UtcNow;
             Merge merger = new Merge();
+            bool complete = true;
             foreach (DirectoryInfo sensorDir in cacheDir.GetDirectories())
             {
                 if (sensorDir.Name.ToUpper() == "CSV") { continue; }
@@ -468,26 +490,30 @@ namespace gov.llnl.wintap.core.etl.load
                     {
                         foreach (DirectoryInfo defaultSensor in sensorDir.GetDirectories())
                         {
+                            if (defaultSensor.GetFiles("*.parquet").Length == 0) { continue; }
                             string[] mergeArgs = new string[2];
                             mergeArgs[0] = defaultSensor.FullName;
                             mergeArgs[1] = mergeTime.ToFileTimeUtc().ToString();
-                            merger.Start(mergeArgs);
+                            complete &= merger.Start(mergeArgs);
                         }
                     }
                     else
                     {
+                        if (sensorDir.GetFiles("*.parquet").Length == 0) { continue; }
                         string[] mergeArgs = new string[2];
                         mergeArgs[0] = sensorDir.FullName;
                         mergeArgs[1] = mergeTime.ToFileTimeUtc().ToString();
-                        merger.Start(mergeArgs);
+                        complete &= merger.Start(mergeArgs);
                     }
 
                 }
                 catch (Exception ex)
                 {
+                    complete = false;
                     WintapLogger.Log.Append("ERROR RUNNING MERGE: " + ex.Message, LogLevel.Info);
                 }
             }
+            return complete;
         }
 
         private void cleanupUnmergedParquet(string path)

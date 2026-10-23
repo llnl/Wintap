@@ -420,6 +420,10 @@ def validate(
     return 0
 
 
+from smoke_manifest import smoke_run, record, epoch_utc, utc_now
+
+
+@smoke_run("network-capture")
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate HTTP(S) traffic and validate Lintap/Wintap parquet capture.")
     parser.add_argument(
@@ -487,6 +491,12 @@ def main() -> int:
         # Generate UDP test traffic as well (separate path). This sends small
         # UDP datagrams to DEFAULT_UDP_TARGETS to exercise UDP capture.
         udp_results = generate_udp_traffic(DEFAULT_UDP_TARGETS, args.rounds, args.request_timeout)
+        record(selectors=[dict(domain="network", case="network-suite", pids=[os.getpid()],
+                               startedAtUtc=epoch_utc(start_epoch), completedAtUtc=utc_now(),
+                               ports=sorted({probe.port for probe in probes} | {port for ip, port in DEFAULT_UDP_TARGETS}),
+                               expectedProtocols=["tcp", "udp"],
+                               targets=[dict(url=p.url, ips=sorted(p.resolved_ipv4), port=p.port,
+                                             requestOk=p.request_ok, error=p.request_error) for p in probes])])
 
         summarize_expected_targets(probes)
 

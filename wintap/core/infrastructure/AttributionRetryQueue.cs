@@ -9,7 +9,12 @@ namespace gov.llnl.wintap.core.infrastructure
     // original event/receive timestamps and emit only after resolution or exhaustion.
     internal sealed class AttributionRetryQueue
     {
-        internal const int MaxAttempts = 3;
+        // Short-lived Linux children can emit file activity before their Clone /
+        // Execve lifecycle records clear the independent ring-buffer pollers.
+        // At the default one-second interval, three attempts exhausted under a
+        // measured rapid-fork workload; retain events for ten seconds, bounded
+        // by the queue capacity, before emitting an Unknown identity.
+        internal const int MaxAttempts = 10;
         private readonly object gate = new object(), pumpGate = new object();
         private readonly Queue<(WintapMessage Message, int Attempt, long Due)> pending = new();
         private readonly Action<WintapMessage, int> retry;
@@ -35,7 +40,11 @@ namespace gov.llnl.wintap.core.infrastructure
         internal static HashSet<WintapMessage.MessageTypeEnum> ParseStreams(string configured)
         {
             var result = new HashSet<WintapMessage.MessageTypeEnum>();
-            foreach (string token in (configured ?? "Registry").Split(','))
+            // File and network callbacks can race Linux lifecycle callbacks on
+            // independent ring-buffer pollers. Retry those bounded streams by
+            // default so a just-arrived Clone/Execve record can establish the
+            // owner before an Unknown identity is emitted.
+            foreach (string token in (configured ?? "Registry,File,TcpConnection,UdpPacket").Split(','))
             {
                 string name = token.Trim();
                 if (name.Length == 0 || name.Equals("none", StringComparison.OrdinalIgnoreCase)) continue;

@@ -73,6 +73,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                     }
                 }
 
+                if (string.IsNullOrWhiteSpace(userName) ||
+                    string.Equals(userName, "unknown", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(userName, "unknown-3", StringComparison.OrdinalIgnoreCase))
+                {
+                    userName = ProcReader.LookupUsername(evt.Uid);
+                }
+
                 var message = new WintapMessage(
                     exitUtc,
                     (int)evt.Pid,
@@ -98,8 +105,21 @@ namespace gov.llnl.wintap.platform.linux.collect
                 }
                 else
                 {
-                    var startUtc = procData.StartTimeUtc != default ? procData.StartTimeUtc.ToUniversalTime() : exitUtc;
-                    message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, startUtc.ToFileTimeUtc()) ?? "";
+                    // The process may have exited before its Clone/Execve
+                    // Start event is registered. Ask the resolver for its
+                    // live /proc-derived stable identity before using an
+                    // exit-time fallback, which would create a Stop-only
+                    // process identity.
+                    string livePidHash = EventChannel.GetStablePidHash((int)evt.Pid, exitUtc);
+                    if (!string.IsNullOrWhiteSpace(livePidHash))
+                    {
+                        message.PidHash = livePidHash;
+                    }
+                    else
+                    {
+                        var startUtc = procData.StartTimeUtc != default ? procData.StartTimeUtc.ToUniversalTime() : exitUtc;
+                        message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, startUtc.ToFileTimeUtc()) ?? "";
+                    }
                 }
                 message.ProcessName = processName;
 

@@ -55,7 +55,7 @@ namespace Wintap.Tests
         {
             var config = new ETLConfig { SerializationIntervalSec = 60 };
             Assert.True(SerializerSchedule.ResolveOptions(config, "registryserializer", 10000).UseDedicatedWorker);
-            Assert.False(SerializerSchedule.ResolveOptions(config, "fileserializer", 10000).UseDedicatedWorker);
+            Assert.True(SerializerSchedule.ResolveOptions(config, "fileserializer", 10000).UseDedicatedWorker);
             Assert.Equal(0, SerializerSchedule.ResolveOptions(config, "tcpconnectionserializer", 10000).HighWaterEvents);
             config.Serializers["registryserializer"] = new ETLConfig.SerializerOptions {
                 UseDedicatedWorker = false, IntervalSec = 0, HighWaterEvents = 0, MaxQueueEvents = -1

@@ -19,7 +19,8 @@ namespace gov.llnl.wintap.platform.linux.collect
         private readonly System.Collections.Generic.List<IntPtr> _additionalLinks = new System.Collections.Generic.List<IntPtr>();
         private const ulong CloneThreadFlag = 0x00010000UL;
         private const ulong VforkSentinelFlags = 0xFFFFFFFFFFFFFFFFUL;
-        protected override string BpfObjectFileName => "clone_tracer.bpf.o";
+        protected override string BpfObjectFileName => "clone_core_tracer.bpf.o";
+        protected override string[] FallbackBpfObjectFileNames => new[] { "clone_tracer.bpf.o" };
         protected override string BpfProgramName => "trace_process_fork";
 
         internal CloneSensor()
@@ -32,31 +33,24 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         protected override bool OnStarting()
         {
-            // BaseEbpfSensor attaches the primary sched_process_fork tracepoint program.
-            // Attach clone/vfork syscall tracepoints too for best-effort clone_flags.
+            RuntimeCapabilities.Feature(CapabilityKey, "threadClassification", LoadedTier == "core" ? "kernel-child-pid-tgid" : "best-effort-syscall-flags");
+            if (LoadedTier != "core")
+                WintapLogger.Log.Append("CLONE_DATA_QUALITY: tracepoint fallback uses best-effort syscall flags; absent hooks or failed flag reads can classify threads as process births. Zero flags are not proof of a process. Review HOST RuntimeCapabilitiesJson.", LogLevel.Warn);
+            // CO-RE classifies the child directly; these optional programs exist
+            // only in the tracepoint fallback for best-effort clone flags.
             try
             {
                 var extraPrograms = new[]
                 {
                     "trace_sys_enter_clone",
+                    "trace_sys_enter_clone3",
                     "trace_sys_enter_vfork",
                 };
 
                 foreach (var programName in extraPrograms)
                 {
-                    IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, programName);
-                    if (prog == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} program '{programName}' not found", LogLevel.Debug);
-                        continue;
-                    }
-
-                    IntPtr link = LibBpf.bpf_program__attach(prog);
-                    if (link == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} failed to attach program '{programName}'", LogLevel.Warn);
-                        continue;
-                    }
+                    IntPtr link = AttachProgram(programName, applicable: LoadedTier != "core");
+                    if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
                     WintapLogger.Log.Append($"{SensorName} attached '{programName}'", LogLevel.Info);
@@ -147,8 +141,15 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 string processName = ProcessSensorHelper.ExtractProcessName(executablePath, evt.GetParentComm());
 
-                // Use child process start time for stable PidHash.
-                DateTime startUtc = childProcData.StartTimeUtc != default ? childProcData.StartTimeUtc.ToUniversalTime() : DateTime.UtcNow;
+                // Use the child start time for a stable PidHash. For a very
+                // short-lived child /proc may be gone by callback time; retain
+                // the kernel fork timestamp rather than assigning callback
+                // time, which would make earlier file/network events appear to
+                // predate their process identity.
+                DateTime startUtc = childProcData.StartTimeUtc != default
+                    ? childProcData.StartTimeUtc.ToUniversalTime()
+                    : (ProcReader.TryConvertBootNsToUtc(evt.TimestampNs) ?? DateTime.UtcNow);
+                startUtc = ProcReader.NormalizeStartTimeUtc(startUtc);
 
                 var message = new WintapMessage(
                     startUtc,
@@ -158,6 +159,12 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 message.ActivityType = WintapMessage.ActivityTypeEnum.Start;
 
+                string userName = !string.IsNullOrWhiteSpace(childProcData.Username)
+                    ? childProcData.Username
+                    : !string.IsNullOrWhiteSpace(parentProcData.Username)
+                        ? parentProcData.Username
+                        : ProcReader.LookupUsername(evt.ParentUid);
+
                 message.Process = ProcessSensorHelper.CreateProcessObject(
                     pid: (int)evt.ChildPid,
                     ppid: (int)evt.ParentPid,
@@ -166,8 +173,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                     commandLine: childProcData.CommandLine != "" 
                                  ? childProcData.CommandLine 
                                  : (parentProcData.CommandLine ?? ""),
-                    user: parentProcData.Username ?? "unknown"
+                    user: userName
                 );
+
+                // Distinguish inherited birth metadata from a later exec image.
+                // Raw observations remain separate; resolver state must not be
+                // downgraded by the independent clone poller arriving late.
+                message.Process.Arguments = "PROC_START_SRC=sched_fork";
 
                 message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, message.EventTime) ?? "";
                 message.ProcessName = processName;

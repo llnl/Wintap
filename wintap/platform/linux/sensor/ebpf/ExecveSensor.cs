@@ -45,19 +45,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 foreach (var programName in extraPrograms)
                 {
-                    IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, programName);
-                    if (prog == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} program '{programName}' not found", LogLevel.Debug);
-                        continue;
-                    }
-
-                    IntPtr link = LibBpf.bpf_program__attach(prog);
-                    if (link == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} failed to attach program '{programName}'", LogLevel.Warn);
-                        continue;
-                    }
+                    IntPtr link = AttachProgram(programName);
+                    if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
                     WintapLogger.Log.Append($"{SensorName} attached '{programName}'", LogLevel.Info);
@@ -176,7 +165,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // ProcessRundown/ProcReader-derived PidHash values.
                 long ticksPerSecond = GetClockTicksPerSecond();
                 ulong startTicks = (startNs * (ulong)ticksPerSecond) / 1_000_000_000UL;
-                var startUtc = bootUtc.Value + TimeSpan.FromSeconds(startTicks / (double)ticksPerSecond);
+                var startUtc = bootUtc.Value.AddTicks(
+                    checked((long)(startTicks * (ulong)TimeSpan.TicksPerSecond / (ulong)ticksPerSecond)));
                 return startUtc.UtcDateTime.ToFileTimeUtc();
             }
             catch
@@ -229,9 +219,14 @@ namespace gov.llnl.wintap.platform.linux.collect
                     : evt.StartTime != 0 && TryConvertBootNsToFileTimeUtc(evt.StartTime) is long startFileTimeUtc
                         ? DateTime.FromFileTimeUtc(startFileTimeUtc)
                         : DateTime.UtcNow;
+                startUtc = ProcReader.NormalizeStartTimeUtc(startUtc);
 
                 var message = new WintapMessage(startUtc, (int)evt.Pid, WintapMessage.MessageTypeEnum.Process);
                 message.ActivityType = WintapMessage.ActivityTypeEnum.Start;
+
+                string userName = !string.IsNullOrWhiteSpace(procData.Username)
+                    ? procData.Username
+                    : ProcReader.LookupUsername(evt.Uid);
 
                 message.Process = ProcessSensorHelper.CreateProcessObject(
                     pid: (int)evt.Pid,
@@ -239,7 +234,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     name: processName,
                     path: executablePath,
                     commandLine: rawCmdline ?? "",
-                    user: procData.Username ?? "unknown-3",
+                    user: userName,
                     arguments: !string.IsNullOrEmpty(procData.Home) 
                         ? $"HOME={procData.Home} SHELL={procData.Shell}" 
                         : null

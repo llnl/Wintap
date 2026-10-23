@@ -62,6 +62,9 @@ namespace gov.llnl.wintap.core.etl.load
             }
 
             flushTimer = new Timer(flushSeconds * 1000);
+            RuntimeCapabilities.Setting("directParquet.maxQueueEvents", maxQueueEvents, "direct-sink-effective");
+            RuntimeCapabilities.Setting("directParquet.dropPolicy", backlogDropPolicy.ToString(), "direct-sink-effective");
+            RuntimeCapabilities.Setting("directParquet.flushSeconds", flushSeconds, "direct-sink-effective");
             flushTimer.AutoReset = true;
             flushTimer.Elapsed += FlushTimer_Elapsed;
             flushTimer.Start();

@@ -8,7 +8,6 @@
 #define FILEOPS_RECORD_PATH 1
 #define FILEOPS_RECORD_FD 2
 #define FILEOPS_RINGBUF_SIZE (16 * 1024 * 1024)
-#define FILEOPS_FORCE_WAKEUP_BYTES (2 * 1024 * 1024)
 #define FILEOPS_POLICY_MAX_RULES 15
 #define FILEOPS_POLICY_STAT_SLOTS 128
 
@@ -225,14 +224,9 @@ static __always_inline int should_drop_policy(__u32 op_type)
 
 static __always_inline void submit_file_event(void *event)
 {
-    __u64 flags = BPF_RB_NO_WAKEUP;
-    __u64 available = bpf_ringbuf_query(&events, BPF_RB_AVAIL_DATA);
-    if (available >= FILEOPS_FORCE_WAKEUP_BYTES) {
-        flags = BPF_RB_FORCE_WAKEUP;
-        increment_stat(FILEOPS_STAT_FORCE_WAKEUP);
-    }
-
-    bpf_ringbuf_submit(event, flags);
+    // Use the kernel's adaptive wakeup policy. Suppressing notifications kept
+    // low-rate records queued despite the userspace poll timeout.
+    bpf_ringbuf_submit(event, 0);
 }
 
 static __always_inline void emit_file_fd_event(__u32 pid, __u32 fd, __u32 bytes, __u32 op_type)

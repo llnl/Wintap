@@ -7,6 +7,9 @@
 		<AssemblyName>Lintap</AssemblyName>
 		<RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
 		<DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+        <DefineConstants Condition="'$(WintapCore)' == 'true'">$(DefineConstants);WINTAP_CORE</DefineConstants>
+        <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**</DefaultItemExcludes>
+        <NuGetLockFilePath>$(MSBuildProjectDirectory)\locks\Lintap\packages.lock.json</NuGetLockFilePath>
 		<UseSharedCompilation>false</UseSharedCompilation>
 		<UseCommonOutputDirectory>false</UseCommonOutputDirectory>
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -37,9 +40,18 @@
 		<None Include="platform\macos\**\*.cs" />
 	</ItemGroup>
 
+    <!-- Match the core host selected by the shared package configuration. -->
+    <ItemGroup Condition="'$(WintapCore)' == 'true'">
+        <Compile Remove="core\api\**\*.cs" />
+        <Compile Include="core\api\helpers\EnumFormatter.cs" />
+        <Compile Remove="core\infrastructure\WintapInference.cs" />
+        <Compile Remove="core\infrastructure\PluginMcpManager.cs" />
+    </ItemGroup>
 	<!-- Linux-specific packages -->
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Extensions.Hosting.Systemd" />
+        <PackageReference Include="System.Management" />
+        <PackageReference Include="System.Diagnostics.PerformanceCounter" />
 	</ItemGroup>
 
 	<!-- Linux-specific packages -->
@@ -57,7 +69,7 @@
 	<PropertyGroup>
 		<McpServerProject>$(MSBuildProjectDirectory)\..\shared\ai\wintap_mcp_server\wintap_mcp_server.csproj</McpServerProject>
 		<EnableMcpServer Condition="'$(EnableMcpServer)' == '' and '$(DISABLE_MCP)' == 'true'">false</EnableMcpServer>
-		<EnableMcpServer Condition="'$(EnableMcpServer)' == ''">true</EnableMcpServer>
+		<EnableMcpServer Condition="'$(EnableMcpServer)' == '' and '$(WintapCore)' != 'true'">true</EnableMcpServer>
 		<McpTempDir>$(OutputPath)mcp_temp\</McpTempDir>
 		<McpOutputDir>$(OutputPath)mcp\</McpOutputDir>
 		<!-- 

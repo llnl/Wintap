@@ -24,6 +24,7 @@ namespace gov.llnl.wintap.platform.linux.collect
         private System.Threading.CancellationTokenSource? _diagReporterCancel;
         private ProcessHash _pidHashGenerator;
         private List<IntPtr> _additionalLinks;
+        private readonly long _monotonicToRealtimeOffsetNs;
 
         protected override string BpfObjectFileName => "network_ops_tracer.bpf.o";
         protected override string[] FallbackBpfObjectFileNames => new[] { "network_tracepoint.bpf.o" };
@@ -34,6 +35,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             SensorName = "Network";
             _pidHashGenerator = new ProcessHash();
             _additionalLinks = new List<IntPtr>();
+            _monotonicToRealtimeOffsetNs = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
         }
 
         public override bool Start()
@@ -178,19 +180,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 int attached = 0;
                 foreach (var programName in programs)
                 {
-                    IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, programName);
-                    if (prog == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} program '{programName}' not found", LogLevel.Debug);
-                        continue;
-                    }
-
-                    IntPtr link = LibBpf.bpf_program__attach(prog);
-                    if (link == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} failed to attach program '{programName}'", LogLevel.Warn);
-                        continue;
-                    }
+                    IntPtr link = AttachProgram(programName, applicable: LoadedTier == "core" || !programName.StartsWith("kprobe") && !programName.StartsWith("kretprobe"));
+                    if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
                     attached++;
@@ -262,8 +253,11 @@ namespace gov.llnl.wintap.platform.linux.collect
                     ? WintapMessage.MessageTypeEnum.TcpConnection
                     : WintapMessage.MessageTypeEnum.UdpPacket;
 
+                DateTime eventTimeUtc = KernelTimestampConverter.ToUtcDateTime(
+                    evt.TimestampNs,
+                    _monotonicToRealtimeOffsetNs);
                 var message = new WintapMessage(
-                    DateTime.UtcNow,
+                    eventTimeUtc,
                     pid,
                     messageType
                 );
@@ -271,8 +265,12 @@ namespace gov.llnl.wintap.platform.linux.collect
                 message.ActivityType = activityType;
                 message.ActivityId = "";
                 message.CorrelationId = "";
-                message.PidHash = _pidHashGenerator?.GenPidHash(pid, message.EventTime) ?? "";
+                // A PID plus callback time is not a process identity. Stamp a
+                // stable cache-/proc-derived identity while the owner is live;
+                // otherwise leave this empty for the bounded resolver retry.
+                message.PidHash = "";
                 message.ProcessName = evt.GetComm() ?? "unknown";
+                EventChannel.TryPopulateCurrentProcessIdentity(message);
 
                 // Convert network byte order IP to string
                 string sourceIp = ConvertIpToString(evt.Saddr);
