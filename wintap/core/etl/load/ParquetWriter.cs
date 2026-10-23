@@ -69,6 +69,8 @@ namespace gov.llnl.wintap.core.etl.load
             }
 
             backlogDropPolicy = ParseDropPolicy(ConfigManager.GetValue<string>("WINTAP_PARQUET_BACKLOG_DROP_POLICY"));
+            RuntimeCapabilities.Setting("writer.maxBatchBacklog", maxBatchBacklog, "writer-effective");
+            RuntimeCapabilities.Setting("writer.dropPolicy", backlogDropPolicy.ToString(), "writer-effective");
 
             batchWorker = new BackgroundWorker();
             batchWorker.DoWork += BatchWorker_DoWork;

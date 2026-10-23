@@ -72,6 +72,15 @@ namespace gov.llnl.wintap.platform.linux.collect
         public static extern long libbpf_get_error(IntPtr ptr);
 
         [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr libbpf_version_string();
+
+        internal static string GetVersion()
+        {
+            try { return Marshal.PtrToStringAnsi(libbpf_version_string()); }
+            catch { return null; } // Older libbpf may not export this symbol.
+        }
+
+        [DllImport(LibBpfLib, CallingConvention = CallingConvention.Cdecl)]
         public static extern int bpf_link__destroy(IntPtr link);
 
         // Map management

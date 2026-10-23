@@ -346,6 +346,11 @@ namespace gov.llnl.wintap.core.etl.extract
 
             int flushIntervalSeconds = schedule.IntervalSec.Value;
             flushHighWaterEvents = schedule.HighWaterEvents.Value;
+            RuntimeCapabilities.Setting("serializer." + SensorName + ".queueCapacity", maxInMemoryEvents, "serializer-effective");
+            RuntimeCapabilities.Setting("serializer." + SensorName + ".dropPolicy", backlogDropPolicy.ToString(), "serializer-effective");
+            RuntimeCapabilities.Setting("serializer." + SensorName + ".flushIntervalSeconds", flushIntervalSeconds, "serializer-effective");
+            RuntimeCapabilities.Setting("serializer." + SensorName + ".highWaterEvents", flushHighWaterEvents, "serializer-effective");
+            RuntimeCapabilities.Setting("serializer." + SensorName + ".dedicatedWorker", schedule.UseDedicatedWorker == true, "serializer-effective");
             if (schedule.UseDedicatedWorker == true)
             {
                 flushWorker = new SerializerFlushWorker(

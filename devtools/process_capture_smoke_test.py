@@ -500,6 +500,10 @@ def validate_short_lived(rows: list[dict], parent_pid: int | None, child_pids: t
     return False, "no short-lived child row matched (need parent_pid_hash)"
 
 
+from smoke_manifest import smoke_run, record, epoch_utc, utc_now
+
+
+@smoke_run("process-capture")
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, default=None)
@@ -570,6 +574,11 @@ def main() -> int:
         print(f"parquet root: {parquet_root}")
 
         suite = spawn_process_suite(short_lived_children=args.short_lived_children)
+        record(selectors=[dict(domain="process", case="process-suite", pids=list(suite.extra_pids),
+                               startedAtUtc=epoch_utc(suite.start_epoch), completedAtUtc=utc_now(),
+                               expectedActivities=["Start", "Stop"] if args.require_stop else ["Start"],
+                               links=[dict(case=link.name, parentPid=link.parent_pid, childPid=link.child_pid)
+                                      for link in suite.links])])
         print(f"spawned suite: links={len(suite.links)} pids={len(suite.extra_pids)}")
 
         deadline = time.time() + args.timeout

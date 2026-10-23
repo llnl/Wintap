@@ -33,6 +33,47 @@ namespace gov.llnl.wintap.platform.linux.collect
         protected abstract string BpfObjectFileName { get; }
         protected abstract string BpfProgramName { get; }
         protected virtual string[] FallbackBpfObjectFileNames => Array.Empty<string>();
+        protected string CapabilityKey => SensorName == "ExitProcess" ? "Exit" : SensorName == "CloneProcess" ? "Clone" : SensorName == "ExecveProcess" ? "Execve" : SensorName;
+        protected string LoadedTier;
+        private string candidateOutcome;
+        private long? candidateError;
+
+        // One native attach path for primary and auxiliary hooks. Never retain ERR_PTR.
+        protected IntPtr AttachProgram(string name, bool primary = false, bool applicable = true)
+        {
+            string role = primary ? "primary" : "auxiliary";
+            if (!applicable)
+            {
+                RuntimeCapabilities.Hook(CapabilityKey, name, role, "not-applicable");
+                return IntPtr.Zero;
+            }
+            try
+            {
+                IntPtr program = LibBpf.bpf_object__find_program_by_name(BpfObject, name);
+                if (program == IntPtr.Zero)
+                {
+                    RuntimeCapabilities.Hook(CapabilityKey, name, role, "not-found");
+                    candidateOutcome = "program-not-found";
+                    return IntPtr.Zero;
+                }
+                IntPtr link = LibBpf.bpf_program__attach(program);
+                long error = link == IntPtr.Zero ? -1 : LibBpf.libbpf_get_error(link);
+                RuntimeCapabilities.Hook(CapabilityKey, name, role, error == 0 ? "attached" : "failed", error == 0 || link == IntPtr.Zero ? null : error);
+                if (error != 0)
+                {
+                    candidateOutcome = "attach-failed";
+                    candidateError = link == IntPtr.Zero ? null : error;
+                    WintapLogger.Log.Append($"{SensorName} failed to attach '{name}' error={error}", LogLevel.Warn);
+                    return IntPtr.Zero;
+                }
+                return link;
+            }
+            catch
+            {
+                RuntimeCapabilities.Hook(CapabilityKey, name, role, "exception");
+                throw;
+            }
+        }
 
         /// <summary>
         /// Start the sensor - loads eBPF program and starts polling
@@ -46,11 +87,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // Check root privileges (required for eBPF)
                 if (getuid() != 0)
                 {
+                    RuntimeCapabilities.Finished(CapabilityKey, false, "root-required");
                     WintapLogger.Log.Append($"{SensorName} requires root privileges", LogLevel.Error);
                     return false;
                 }
 
                 LogEbpfEnvironment();
+                RuntimeCapabilities.Feature(CapabilityKey, "libbpfVersion", LibBpf.GetVersion());
 
                 string[] candidates = GetBpfObjectCandidates();
                 if (!TryLoadBpfProgram(candidates, out string loadedPath))
@@ -59,6 +102,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 }
 
                 WintapLogger.Log.Append($"{SensorName} loaded eBPF object: {loadedPath}", LogLevel.Info);
+                LoadedTier = Path.GetFileName(loadedPath).Contains("tracepoint") || Path.GetFileName(loadedPath) == "clone_tracer.bpf.o" ? "tracepoint" : "core";
+                RuntimeCapabilities.Loaded(CapabilityKey, loadedPath, LoadedTier);
 
                 // Allow subclass to do additional initialization
                 if (!OnStarting())
@@ -103,11 +148,16 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 if (!File.Exists(bpfPath))
                 {
+                    RuntimeCapabilities.Attempt(CapabilityKey, bpfPath, "not-found");
                     WintapLogger.Log.Append($"{SensorName} BPF object not found: {bpfPath}", LogLevel.Warn);
                     continue;
                 }
 
-                if (LoadBpfProgram(bpfPath))
+                candidateOutcome = "load-failed";
+                candidateError = null;
+                bool loaded = LoadBpfProgram(bpfPath);
+                RuntimeCapabilities.Attempt(CapabilityKey, bpfPath, loaded ? "selected" : candidateOutcome, candidateError);
+                if (loaded)
                 {
                     loadedPath = bpfPath;
                     return true;
@@ -125,8 +175,12 @@ namespace gov.llnl.wintap.platform.linux.collect
         {
             // Open BPF object
             BpfObject = LibBpf.bpf_object__open(bpfPath);
-            if (BpfObject == IntPtr.Zero)
+            long openError = BpfObject == IntPtr.Zero ? -1 : LibBpf.libbpf_get_error(BpfObject);
+            if (openError != 0)
             {
+                BpfObject = IntPtr.Zero;
+                candidateOutcome = "open-failed";
+                candidateError = openError;
                 WintapLogger.Log.Append($"{SensorName} failed to open BPF object", LogLevel.Error);
                 return false;
             }
@@ -135,30 +189,20 @@ namespace gov.llnl.wintap.platform.linux.collect
             int ret = LibBpf.bpf_object__load(BpfObject);
             if (ret != 0)
             {
+                candidateError = ret;
                 WintapLogger.Log.Append($"{SensorName} failed to load BPF: {ret}", LogLevel.Error);
                 return false;
             }
 
             // Find program by name
-            IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, BpfProgramName);
-            if (prog == IntPtr.Zero)
-            {
-                WintapLogger.Log.Append($"{SensorName} program '{BpfProgramName}' not found", LogLevel.Error);
-                return false;
-            }
-
-            // Attach to tracepoint
-            BpfLink = LibBpf.bpf_program__attach(prog);
-            if (BpfLink == IntPtr.Zero)
-            {
-                WintapLogger.Log.Append($"{SensorName} failed to attach program", LogLevel.Error);
-                return false;
-            }
+            BpfLink = AttachProgram(BpfProgramName, primary: true);
+            if (BpfLink == IntPtr.Zero) return false;
 
             // Setup ring buffer
             IntPtr eventsMap = LibBpf.bpf_object__find_map_by_name(BpfObject, "events");
             if (eventsMap == IntPtr.Zero)
             {
+                candidateOutcome = "events-map-not-found";
                 WintapLogger.Log.Append($"{SensorName} events map not found", LogLevel.Error);
                 return false;
             }
@@ -171,6 +215,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             RingBuffer = LibBpf.ring_buffer__new(mapFd, RingBufferCallback, IntPtr.Zero, IntPtr.Zero);
             if (RingBuffer == IntPtr.Zero)
             {
+                candidateOutcome = "ring-buffer-failed";
                 WintapLogger.Log.Append($"{SensorName} failed to create ring buffer", LogLevel.Error);
                 return false;
             }

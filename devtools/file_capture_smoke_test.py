@@ -394,6 +394,10 @@ def drain_lines(proc: subprocess.Popen, max_lines: int = 200) -> tuple[list[str]
     return out_lines, err_lines
 
 
+from smoke_manifest import smoke_run, record, epoch_utc, utc_now
+
+
+@smoke_run("file-capture")
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, default=None)
@@ -491,6 +495,10 @@ def main() -> int:
         print(f"parquet root: {parquet_root}")
 
         stimulus = generate_file_activity(args.file_dir, args.unique_file_count)
+        record(selectors=[dict(domain="file", case="file-suite", pids=[stimulus.pid],
+                               pathPrefix=stimulus.path_prefix, expectedPaths=stimulus.unique_file_count,
+                               startedAtUtc=epoch_utc(stimulus.start_epoch), completedAtUtc=utc_now(),
+                               expectedActivities=["Open", "Read", "Write", "Close", "Delete"])])
         print(f"generated file activity: pid={stimulus.pid} path={stimulus.path} unique_files={max(1, args.unique_file_count)}")
 
         deadline = time.time() + args.timeout

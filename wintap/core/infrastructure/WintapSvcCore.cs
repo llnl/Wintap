@@ -204,6 +204,13 @@ namespace gov.llnl.wintap
             try
             {
                 WintapLogger.Log.Append("StartupWorker beginning initialization", LogLevel.Info);
+                foreach (string key in new[] { "WINTAP_DISABLE_SENSORS", "WINTAP_DISABLE_ETL", "WINTAP_ENABLE_DIRECT_PARQUET",
+                    "WINTAP_SKIP_PROCESS_RESOLVE", "WINTAP_SKIP_PARENT_PROCESS_RESOLVE", "WINTAP_SKIP_PROCESS_REGISTER",
+                    "WINTAP_SKIP_ESPER_SEND", "WriteToParquet", "EnableBpfDiagMonitor" })
+                    RuntimeCapabilities.Setting(key, ConfigManager.GetValue<bool>(key), ConfigManager.GetValueSource<bool>(key));
+                foreach (string key in new[] { "SensorProfile" })
+                    RuntimeCapabilities.Setting(key, ConfigManager.GetValue<string>(key), ConfigManager.GetValueSource<string>(key));
+                RuntimeCapabilities.Setting("parquetCompression", core.etl.load.ParquetWriter.GetCompressionMethod().ToString(), "writer-effective");
 
                 // ─── Platform-Specific Configuration ───────────────────────────
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -301,6 +308,9 @@ namespace gov.llnl.wintap
                                        string.Equals(sensorsVal, "1", StringComparison.OrdinalIgnoreCase);
                 if (sensorsDisabled)
                 {
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                        foreach (string key in new[] { "Execve", "Clone", "Exit", "Network", "FileOps", "SELinux", "ProcessRundown" })
+                            RuntimeCapabilities.Sensor(key, false, "global:WINTAP_DISABLE_SENSORS");
                     WintapLogger.Log.Append("Sensors disabled by WINTAP_DISABLE_SENSORS", LogLevel.Warn);
                 }
                 else try
@@ -335,6 +345,10 @@ namespace gov.llnl.wintap
                     }
                 }
 #endif
+                string capabilityJson = RuntimeCapabilities.Complete();
+                WintapLogger.Log.Append("RUNTIME_CAPABILITIES " + capabilityJson, LogLevel.Info);
+                // Independent of Esper/ETL enablement and previous HOST files.
+                await core.etl.extract.HostSerializer.Instance.WriteHostRecordAsync(publish: true);
                 WintapLogger.Log.Append("Startup complete.", LogLevel.Info);
             }
             catch (Exception ex)

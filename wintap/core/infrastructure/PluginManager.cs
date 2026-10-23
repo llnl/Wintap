@@ -94,6 +94,7 @@ namespace gov.llnl.wintap.core.infrastructure
         internal PluginManager()
         {
             WintapLogger.Log.Append("Plugin manager is starting", LogLevel.Info);
+            RuntimeCapabilities.EnsureInitialized();
 
             runQueue = new ConcurrentQueue<Runnable>();
             loadedPluginNames = new HashSet<string>();
@@ -115,6 +116,7 @@ namespace gov.llnl.wintap.core.infrastructure
             PluginExceptionHandler.Instance.Initialize();
 
             WintapLogger.Log.Append($"Parquet serialization for this session: {doETL}", LogLevel.Info);
+            RuntimeCapabilities.Setting("etlStarted", doETL, "plugin-manager-result");
         }
 
         #endregion

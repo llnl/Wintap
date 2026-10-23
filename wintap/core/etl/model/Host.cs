@@ -41,5 +41,8 @@ namespace gov.llnl.wintap.core.etl.models
 
         public string Collectors { get; set; }
 
+        /// <summary>Versioned effective startup evidence; null on legacy/uninstrumented records.</summary>
+        public string RuntimeCapabilitiesJson { get; set; }
+
     }
 }

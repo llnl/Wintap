@@ -253,6 +253,10 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         public override bool Start()
         {
+            RuntimeCapabilities.Feature(CapabilityKey, "aggregationEnabled", _aggregationEnabled);
+            RuntimeCapabilities.Feature(CapabilityKey, "aggregationWindowMs", _aggregationWindowMs);
+            RuntimeCapabilities.Feature(CapabilityKey, "aggregationMaxKeys", GetConfiguredAggregationMaxKeys());
+            RuntimeCapabilities.Feature(CapabilityKey, "directoryIndexMaxEntries", GetConfiguredDirIndexMaxEntries());
             // Call base to attach first program (trace_openat)
             if (!base.Start())
                 return false;
@@ -266,6 +270,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                 Stop();
                 return false;
             }
+            RuntimeCapabilities.Feature(CapabilityKey, "denyComms", _denyCommRules.ToArray());
+            RuntimeCapabilities.Feature(CapabilityKey, "sendQueueCapacity", _sendQueueCapacity);
+            RuntimeCapabilities.Feature(CapabilityKey, "sendQueueDropPolicy", "drop-newest");
 
             // Attach additional programs from the same .bpf.o file
             try
@@ -288,19 +295,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 foreach (var progName in programNames)
                 {
-                    IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, progName);
-                    if (prog == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} program '{progName}' not found", LogLevel.Warn);
-                        continue;
-                    }
-
-                    IntPtr link = LibBpf.bpf_program__attach(prog);
-                    if (link == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} failed to attach '{progName}'", LogLevel.Warn);
-                        continue;
-                    }
+                    IntPtr link = AttachProgram(progName);
+                    if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
                     WintapLogger.Log.Append($"{SensorName} attached '{progName}'", LogLevel.Info);

@@ -624,7 +624,8 @@ namespace gov.llnl.wintap.core.infrastructure
                 // Start/Refresh upsert (preserve existing exit_time/exit_code if already set).
                 try
                 {
-                    UpsertProcessStart(connection, message, createTime);
+                    if (!UpsertProcessStart(connection, message, createTime))
+                        return;
                     SetActiveProcessCacheEntry(message.PID, rawPidHash, proc.Name, createTime);
                     ApplyPendingExit(message.PID, rawPidHash, createTime);
 
@@ -641,9 +642,20 @@ namespace gov.llnl.wintap.core.infrastructure
             }
         }
 
-        internal static void UpsertProcessStart(DuckDBConnection connection, WintapMessage message, DateTime createTime)
+        internal static bool UpsertProcessStart(DuckDBConnection connection, WintapMessage message, DateTime createTime)
         {
             WintapMessage.ProcessObject proc = message.Process;
+            // A birth record is provisional inherited metadata. It may arrive
+            // after Exec/Refresh/Stop on a different poller; never replace an
+            // already registered identity or revive its active-cache entry.
+            if (IsCloneBirth(message))
+            {
+                using var existing = connection.CreateCommand();
+                existing.CommandText = "SELECT COUNT(*) FROM process WHERE pid_hash = $pid_hash";
+                existing.Parameters.Add(new DuckDBParameter("pid_hash", message.PidHash ?? string.Empty));
+                if (Convert.ToInt64(existing.ExecuteScalar()) != 0)
+                    return false;
+            }
             using var command = connection.CreateCommand();
             command.CommandText = @"
                     INSERT INTO process (
@@ -694,6 +706,13 @@ namespace gov.llnl.wintap.core.infrastructure
             command.Parameters.Add(new DuckDBParameter("md5_hash", string.IsNullOrEmpty(proc.MD5) ? DBNull.Value : proc.MD5));
             command.Parameters.Add(new DuckDBParameter("sha2_hash", string.IsNullOrEmpty(proc.SHA2) ? DBNull.Value : proc.SHA2));
             command.ExecuteNonQuery();
+            return true;
+        }
+
+        private static bool IsCloneBirth(WintapMessage message)
+        {
+            return message.Process?.Arguments?.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains("PROC_START_SRC=sched_fork") == true;
         }
 
         internal static bool TryRepairParentLinkage(

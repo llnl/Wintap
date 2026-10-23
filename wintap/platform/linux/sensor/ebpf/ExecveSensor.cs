@@ -45,19 +45,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 foreach (var programName in extraPrograms)
                 {
-                    IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, programName);
-                    if (prog == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} program '{programName}' not found", LogLevel.Debug);
-                        continue;
-                    }
-
-                    IntPtr link = LibBpf.bpf_program__attach(prog);
-                    if (link == IntPtr.Zero)
-                    {
-                        WintapLogger.Log.Append($"{SensorName} failed to attach program '{programName}'", LogLevel.Warn);
-                        continue;
-                    }
+                    IntPtr link = AttachProgram(programName);
+                    if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
                     WintapLogger.Log.Append($"{SensorName} attached '{programName}'", LogLevel.Info);

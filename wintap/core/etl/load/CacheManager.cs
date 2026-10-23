@@ -469,7 +469,8 @@ namespace gov.llnl.wintap.core.etl.load
                 }
             }
 
-            if (genHost) { HostSerializer.Instance.WriteHostRecord(); }
+            // Startup writes a fresh receipt even when previous HOST files exist.
+            if (genHost && RuntimeCapabilities.IsComplete) { HostSerializer.Instance.WriteHostRecord(); }
             if (genMacIp) { HostSerializer.Instance.WriteMacIPRecords(); }
         }
 

@@ -106,6 +106,7 @@ namespace gov.llnl.wintap.platform.linux.collect
         {
             if (!IsSELinuxPresent())
             {
+                RuntimeCapabilities.Finished(CapabilityKey, false, "selinux-filesystem-absent");
                 WintapLogger.Log.Append("SELinux sensor disabled: /sys/fs/selinux/enforce is not present", LogLevel.Warn);
                 return false;
             }
@@ -135,6 +136,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                 }
 
                 WintapLogger.Log.Append($"{SensorName} attached {_additionalLinks.Count + 1} programs total", LogLevel.Info);
+                RuntimeCapabilities.Feature(CapabilityKey, "interactionAttachMode", _interactionAttachMode);
+                RuntimeCapabilities.Feature(CapabilityKey, "enforcing", IsSELinuxEnforcing());
+                RuntimeCapabilities.Feature(CapabilityKey, "policyEpoch", Interlocked.Read(ref _policyEpoch));
                 _counterLogTimer = new Timer(_ => SafeLogCounters(), null, 10_000, 60_000);
                 int flushMs = Math.Max(1, GetConfiguredFlushSeconds()) * 1000;
                 _interactionFlushTimer = new Timer(_ => SafeFlushInteractions(), null, flushMs, flushMs);
@@ -164,20 +168,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         private bool TryAttachProgram(string progName)
         {
-            IntPtr prog = LibBpf.bpf_object__find_program_by_name(BpfObject, progName);
-            if (prog == IntPtr.Zero)
-            {
-                WintapLogger.Log.Append($"{SensorName} program '{progName}' not found", LogLevel.Warn);
-                return false;
-            }
-
-            IntPtr link = LibBpf.bpf_program__attach(prog);
-            long linkError = link == IntPtr.Zero ? -1 : LibBpf.libbpf_get_error(link);
-            if (link == IntPtr.Zero || linkError != 0)
-            {
-                WintapLogger.Log.Append($"{SensorName} failed to attach '{progName}' error={linkError}", LogLevel.Warn);
-                return false;
-            }
+            IntPtr link = AttachProgram(progName);
+            if (link == IntPtr.Zero) return false;
 
             _additionalLinks.Add(link);
             WintapLogger.Log.Append($"{SensorName} attached '{progName}'", LogLevel.Info);

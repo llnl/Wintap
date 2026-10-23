@@ -2,6 +2,120 @@
 
 This directory contains small utilities for validating and troubleshooting Wintap, Mactap, and Lintap deployments.
 
+## Portable smoke run manifests and results dashboard
+
+The named workload, process/file/network capture tests, clone trace/pipeline/package
+validators and runtime-capability validator now accept `--manifest /path/run.json`.
+Default: `./smoke-results/<test>-<uuid>.json`. Existing files are refused. The common
+`smoke_manifest.py` records run UUID, test hostname/UTC interval, exact stimulus
+selectors and success/failure results (including failed validation with no data).
+Internal named-workload workers do not create independent manifests.
+
+For automatic ride-along evidence, use a Python environment with `duckdb` and
+pass `--smoke-data-root /var/log/lintap/data` (contains `raw_sensor`). All eight
+families write typed parquet plus full manifest JSON into
+`raw_sensor/raw_smoke_test/dayPK=YYYYMMDD/hourPK=HH/` with UTC publication partitions.
+`WINTAP_DATA_ROOT` enables this too; `--no-smoke-parquet` opts out. Interactive
+shells do not automatically inherit the service's environment file. Use a writable
+smoke subtree and keep stimulus files outside the collector data/runtime roots.
+
+Start/first-selectors/final are up to three immutable UUID/revision snapshots,
+published via `.parquet.active`→`.parquet`. Existing transfer moves them alongside
+telemetry; normal latency and source deletion are accepted. No uploader changes,
+delivery acknowledgements, long-term spool or retry daemon. Missing DuckDB or export
+errors warn and retain JSON without changing workload outcome. JSON/manual upload
+remains optional. The analysis host need not be the test host; the app automatically
+discovers parquet runs. The read-only dashboard lives in sibling Analytics:
+
+```bash
+python3 -m streamlit run streamlit/projects/SmokeTests/main.py
+```
+
+Run that command **from Wintap-Analytics**, after installing its app-local
+`streamlit/projects/SmokeTests/requirements.txt`. Select analysis-local parquet and
+data root (or `raw_sensor`) and optionally JSON paths/uploads. Host+time+PID/path/ports scope each run; event rows
+do not themselves carry the smoke UUID. Run repeated tests sequentially to avoid
+ambiguous overlaps. No legacy inference. See that app's README for VM→Mac examples.
+
+## Named cross-domain stimulus (Linux, field-friendly Python)
+
+With the collector **already running**, generate a tiny identifiable dataset:
+
+```bash
+python3 devtools/telemetry_smoke_workload.py --output /home/user/qa/smoke-001
+```
+
+Stdlib only, no root required, no collector configuration changes, no external
+network traffic. Use a **fresh** directory outside collector data/runtime roots
+and filtered paths such as `/tmp`; all workload writes are confined there.
+The directory retains `manifest.json`, per-process evidence and Python exec
+aliases; test files are removed by their lifecycle, not a broad cleanup command.
+
+Cases use `wt_*` names (Linux comm ≤15 bytes), exec aliases and command-line case
+labels. Match manifest PID/TID **and time**, file paths and socket endpoints too:
+fork birth inherits its parent's name and resolver may normalize Python aliases.
+Each invocation has a distinct run ID/output directory.
+
+- Process: fork-only, fork+exec/image replacement, posix_spawn/exec, thread creation
+  (negative process-Start case), and normal exits. `posix_spawn` does not guarantee
+  a particular libc syscall implementation.
+- File: create/open, write/read, file-backed mmap, close, delete, relative
+  dirfd openat/unlinkat; extra rename/truncate probes. Current Linux normalized
+  activities are Open/Read/Write/Close/Delete; mmap folds into Read.
+- Network: IPv4 loopback TCP connect/accept/send/receive/disconnect, both endpoint
+  processes; connected and unconnected UDP send/receive. `--ipv6` generates extra
+  IPv6 activity but current Linux capture is not certified for IPv6.
+
+For explicit legacy clone/clone3 process/thread, worker-thread fork, and vfork+exec
+probes, build the optional existing native helper:
+
+```bash
+cc -O2 -pthread -o /home/user/qa/clone-helper devtools/clone_lifecycle_workload.c
+python3 devtools/telemetry_smoke_workload.py --output /home/user/qa/smoke-002 \
+  --clone-helper /home/user/qa/clone-helper
+```
+
+Only one native round runs; naming/extras are enabled by `WINTAP_SMOKE_NAMES=1`
+inside this invocation, leaving existing default validation manifests unchanged.
+Absent helper is an explicit skip; unsupported clone3 includes errno in the native
+manifest. Supplied-but-broken helpers or failed operations return exit 1, with
+results retained. `--hold` adjusts Python worker dwell (default 0.2 seconds).
+
+**“generated” proves OS stimulus, not sensor capture.** Compare manifest operations
+to existing process/file/network capture tests or query collected parquet after
+normal aggregation/serialization/merge. Do not assert one row per syscall. Read
+HOST RuntimeCapabilitiesJson for attach/filter evidence; Refresh requires rundown
+timing, and HOST/SELinux/security events are not induced here. Workload regression:
+`python3 devtools/test_telemetry_smoke_workload.py -v` (Linux).
+
+## Clone Lifecycle Validation (Linux)
+
+`clone_lifecycle_workload.c` produces a PID/TID manifest for 20 rounds of fork,
+fork+exec, worker-thread fork, pthread, legacy clone thread, and clone3 process/thread.
+Build with `cc -O2 -pthread -o workload clone_lifecycle_workload.c`.
+`clone_trace_runner.c` attaches actual tracer objects; build with
+`cc -O2 -o runner clone_trace_runner.c -lbpf`. Requires compiler/libbpf headers,
+Linux eBPF privileges and a fresh output directory for each run.
+
+```bash
+sudo python3 validate_clone_trace.py --object /path/clone_core_tracer.bpf.o \
+  --runner /path/runner --workload /path/workload --output /fresh/trace-run
+```
+
+Repeat with `clone_tracer.bpf.o`, then `--primary-only` to simulate absent
+auxiliary hooks. Optional attach failures are logged; unsupported clone3 is
+reported as a skip. The CO-RE path uses authoritative child pid/tgid; the fallback
+uses best-effort clone/clone3 flags and can misclassify threads without those hooks.
+
+`validate_clone_pipeline.py --dll /path/Lintap.dll --workload /path/workload
+--output /fresh/pipeline-run` requires root and Python `duckdb`. It starts only
+clone+exec, waits for both registrations, and checks direct-parquet runtime staging
+output (ETL/registration bypassed). Successful fork+exec can generate **three**
+Start observations (fork, exec entry, sched exec) sharing one PidHash; this harness
+preserves them rather than asserting exactly two rows. Resolver ordering is tested
+separately by the `clone-validation` xUnit category. This is not packaged/normal-ETL
+acceptance or a cross-kernel compatibility guarantee.
+
 ## Network Capture Smoke Test
 
 `network_capture_smoke_test.py` is an integration smoke test for the Lintap/Wintap network capture pipeline. It generates a small amount of outbound HTTP/HTTPS traffic plus a small UDP datagram, waits for parquet output, and queries the captured parquet files with DuckDB to confirm that recent outbound network records were collected.
@@ -333,3 +447,32 @@ Example:
 - Python 3.8+
 - ~1GB RAM for typical log files
 - Internet connection (first run only, to download ML model)
+### Durable runtime capability receipts
+
+`validate_clone_package.py` tests an idle installed `lintap.service` on a
+designated disposable host with normal ETL and untouched default Clone=true.
+It checks the 20-round manifest plus bounded 100-round churn, HOST publication,
+restart and explicit opt-out; it temporarily edits Clone only and restores the
+environment in `finally`. Requires Python duckdb, root and the compiled workload.
+Allow two full merge intervals (default 320 seconds each); do not run concurrently
+with other app harnesses. `clone_lifecycle_workload.c --rounds=N` supports 1–1000
+rounds (default 20); large runs retain thread stacks and are not an unbounded stress tool.
+
+```bash
+sudo /native/qa-venv/bin/python validate_clone_package.py --workload /native/clone-workload --output /fresh/package-qa
+```
+
+`validate_runtime_capabilities.py` validates startup JSON in published HOST parquet
+against the identical `RUNTIME_CAPABILITIES` log record, then checks a restart
+against the same root and global sensor disablement. Requires Linux/root and
+Python `duckdb`; use a fresh output directory. Run sequentially with other app
+harnesses (the API listener may bind a fixed port despite ASPNETCORE_URLS).
+
+```bash
+sudo python validate_runtime_capabilities.py --dll /native/build/Lintap.dll --output /fresh/receipt-run
+```
+
+Optional `--fallback-dll /separately/staged/fallback/Lintap.dll` verifies the
+tracepoint Clone tier and clone3 hook. Stage a separate app payload without
+CO-RE objects; never remove objects from the installed/running app for this test.
+This is source-build validation, not package or downstream DBT acceptance.

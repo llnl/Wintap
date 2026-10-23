@@ -9,6 +9,81 @@ namespace Wintap.Tests
 {
     public class ProcessResolverTests
     {
+        [Fact, Trait("Category", "clone-validation")]
+        public void UnmarkedDuplicateStart_CharacterizesExistingMetadataOverwrite()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 16, enableMaintenance: false,
+                registrationLogSink: (_, _) => { });
+            RegisterLifecycle(connection, resolver, "duplicate", WintapMessage.ActivityTypeEnum.Start, 0, 0, null);
+            var late = new WintapMessage(BaseTime, 42, WintapMessage.MessageTypeEnum.Process)
+            {
+                PidHash = "duplicate", ActivityType = WintapMessage.ActivityTypeEnum.Start,
+                Process = new WintapMessage.ProcessObject
+                {
+                    Name = "inherited", Path = "inherited", ParentPID = 1,
+                    CommandLine = "inherited", User = "fixture"
+                }
+            };
+            resolver.RegisterProcess(late);
+            using var read = connection.CreateCommand();
+            read.CommandText = "SELECT process_name FROM process WHERE pid_hash='duplicate'";
+            Assert.Equal("inherited", read.ExecuteScalar());
+            Assert.Equal(1L, ScalarLong(connection, "SELECT COUNT(*) FROM process"));
+        }
+
+        [Theory, Trait("Category", "clone-validation")]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(true, true)]
+        public void CloneAndExec_KeepOneIdentityAndExecMetadata(bool execFirst, bool stopped)
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 16, enableMaintenance: false,
+                registrationLogSink: (_, _) => { });
+            WintapMessage Start(string name, string source) => new WintapMessage(
+                BaseTime, 42, WintapMessage.MessageTypeEnum.Process)
+            {
+                PidHash = "clone-exec-identity",
+                ActivityType = WintapMessage.ActivityTypeEnum.Start,
+                Process = new WintapMessage.ProcessObject
+                {
+                    PID = 42, ParentPID = 1, ParentPidHash = "parent", Name = name,
+                    Path = "/bin/" + name, CommandLine = name + " args", User = "fixture",
+                    Arguments = "PROC_START_SRC=" + source, MD5 = name, SHA2 = name
+                }
+            };
+            var clone = Start("inherited", "sched_fork");
+            var exec = Start("executed", "sched_exec");
+            if (!execFirst) resolver.RegisterProcess(clone);
+            resolver.RegisterProcess(exec);
+            if (stopped)
+            {
+                var stop = Start("executed", "sched_exec");
+                stop.ActivityType = WintapMessage.ActivityTypeEnum.Stop;
+                stop.EventTime = BaseTime.AddSeconds(2).ToFileTimeUtc();
+                resolver.RegisterProcess(stop);
+            }
+            // Include a duplicate birth even in ordinary Clone->Exec order.
+            resolver.RegisterProcess(clone);
+            Assert.Equal(1L, ScalarLong(connection, "SELECT COUNT(*) FROM process"));
+            using var read = connection.CreateCommand();
+            read.CommandText = "SELECT process_name, image_path, command_line, md5_hash FROM process";
+            using (var row = read.ExecuteReader())
+            {
+                Assert.True(row.Read());
+                Assert.Equal("executed", row.GetString(0));
+                Assert.Equal("/bin/executed", row.GetString(1));
+                Assert.Equal("executed args", row.GetString(2));
+                Assert.Equal("executed", row.GetString(3));
+            }
+            AssertStoredLifetime(connection, "clone-exec-identity", BaseTime,
+                stopped ? BaseTime.AddSeconds(2) : (DateTime?)null);
+            Assert.Equal(!stopped, resolver.TryResolveCurrentProcessAtTime(42,
+                BaseTime.AddSeconds(3), out var active));
+            if (!stopped) Assert.Equal("executed", active.ProcessName);
+        }
 
         [Theory, Trait("Category", "pai-07")]
         [InlineData(true, true, false)]

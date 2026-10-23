@@ -18,6 +18,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Timers;
+using System.Threading.Tasks;
 
 namespace gov.llnl.wintap.core.etl.extract
 {
@@ -60,6 +61,7 @@ namespace gov.llnl.wintap.core.etl.extract
             hostObject.Hostname = HostSerializer.Instance.HostId.Hostname;
             hostObject.EventTime = ((System.DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds();
             hostObject.MessageType = "Host";
+            hostObject.RuntimeCapabilitiesJson = RuntimeCapabilities.GetJson();
             return hostObject;
         }
 
@@ -74,7 +76,9 @@ namespace gov.llnl.wintap.core.etl.extract
         /// <summary>
         /// Send up any host-level changes and check-in with a current "EventTime"
         /// </summary>
-        internal async void WriteHostRecord()
+        internal async void WriteHostRecord() => await WriteHostRecordAsync();
+
+        internal async Task WriteHostRecordAsync(bool publish = false)
         {
             try
             {
@@ -95,6 +99,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 host.ETLVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString();
                 host.MessageType = "Host";
                 host.AgentId = Utilities.GetAgentId();
+                host.RuntimeCapabilitiesJson = RuntimeCapabilities.GetJson();
 
                 string hostFile = "host-" + DateTime.UtcNow.ToFileTimeUtc() + ".parquet";
                 DirectoryInfo hostDir = new DirectoryInfo(this.etlRoot);
@@ -110,9 +115,18 @@ namespace gov.llnl.wintap.core.etl.extract
                 List<ExpandoObject> data = new List<ExpandoObject>();
                 data.Add(host.ToDynamic());
 
-                using (var fileStream = new FileStream(hostFile, FileMode.Create, FileAccess.Write))
+                string pendingFile = hostFile + ".pending";
+                using (var fileStream = new FileStream(pendingFile, FileMode.Create, FileAccess.Write))
                 {
                     await ParquetSerializer.SerializeAsync(schema, data, fileStream, options);
+                }
+                File.Move(pendingFile, hostFile);
+                if (publish)
+                {
+                    // Publish metadata even when the normal ETL/merge timer is disabled.
+                    string destination = Environment.MachineName.ToLowerInvariant() + "+raw_host+" + DateTime.UtcNow.ToFileTimeUtc() + ".parquet";
+                    gov.llnl.wintap.core.etl.load.RawSensorWriter.MaterializeFromParquetGlob(hostFile, destination);
+                    File.Delete(hostFile); // Only after successful materialization.
                 }
             }
             catch (Exception ex)
