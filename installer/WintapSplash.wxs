@@ -2,7 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <Binary Id="WintapSplashBitmap" SourceFile="assets\WintapSplash.bmp" />
-    <UI>
+    <UI Id="WintapSplashUI">
       <Dialog Id="WintapSplashDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
           <Publish Event="NewDialog" Value="WelcomeDlg" />

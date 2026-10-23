@@ -106,5 +106,6 @@
     </Component>
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="WintapSplashUI" />
   </Package>
 </Wix>
