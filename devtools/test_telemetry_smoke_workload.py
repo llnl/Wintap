@@ -20,6 +20,13 @@ class TelemetryWorkloadTests(unittest.TestCase):
             portable = json.loads((Path(directory) / "run.json").read_text())
             self.assertEqual(portable["test"], "telemetry-workload")
             self.assertTrue(portable["selectors"])
+            udp = [s for s in portable['selectors'] if s['domain'] == 'network' and 'udp4' in s['case']]
+            self.assertEqual(len(udp), 4)  # Two independent client/server modes.
+            self.assertEqual(len({pid for s in udp for pid in s['pids']}), 4)
+            self.assertTrue(all(len(s['endpointExpectations']) == 1 for s in udp))
+            self.assertTrue(all(s['endpointExpectations'][0]['protocol'] == 'udp' for s in udp))
+            files = [s for s in portable['selectors'] if s['domain'] == 'file']
+            self.assertTrue(all(s['pathExpectations'] for s in files))
             self.assertTrue(portable["host"]["hostname"])
             self.assertTrue(manifest["stimulusOnly"])
             generated = {row["case"] for row in manifest["cases"] if row["status"] == "generated"}

@@ -43,6 +43,7 @@ class FileStimulus:
     path_prefix: str
     unique_file_count: int
     start_epoch: float
+    paths: tuple[Path, ...] = ()
 
 
 def default_data_root() -> Path:
@@ -202,9 +203,11 @@ def generate_file_activity(base_dir: Path | None = None, unique_file_count: int 
     base.mkdir(parents=True, exist_ok=True)
     payload = ("lintap-file-smoke " + str(start_epoch)).encode("utf-8")
     first_path: Path | None = None
+    paths = []
 
     for index in range(max(1, unique_file_count)):
         path = base / (f"wintap-file-smoke-{pid}-{int(start_epoch)}-{index}.txt")
+        paths.append(path)
         if first_path is None:
             first_path = path
 
@@ -236,6 +239,7 @@ def generate_file_activity(base_dir: Path | None = None, unique_file_count: int 
         path_prefix=str(base / f"wintap-file-smoke-{pid}-{int(start_epoch)}-"),
         unique_file_count=max(1, unique_file_count),
         start_epoch=start_epoch,
+        paths=tuple(paths),
     )
 
 

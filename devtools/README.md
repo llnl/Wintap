@@ -62,6 +62,42 @@ ambiguous overlaps. No legacy inference. See that app's README for VM→Mac exam
 
 ## Named cross-domain stimulus (Linux, field-friendly Python)
 
+UDP now uses independent unconnected and connected client/server workers/sockets,
+with separate manifest cases, rather than allowing a connected Receive to satisfy
+both phases. Existing canary limits remain stimulus-only; no collector is started.
+
+## Actual-object network qualification (dev-time only)
+
+On a designated idle Linux VM, build a reviewed CO-RE object and the observer:
+
+```bash
+make -C wintap/platform/linux/sensor/ebpf/tracers network_ops_tracer.bpf.o
+cc -Wall -Wextra -Werror -O2 devtools/network_trace_runner.c -o /path/outside/git/network-trace-runner -lbpf -lelf -lz
+python3 devtools/network_trace_smoke_test.py --runner /path/outside/git/network-trace-runner \
+  --object wintap/platform/linux/sensor/ebpf/tracers/network_ops_tracer.bpf.o \
+  --output /path/outside/git/fresh-network-qualification
+```
+
+This **attaches tracers**, so it is not a recurring canary and must not run on
+active collection hosts. Noninteractive sudo must already be authorized; the
+harness never changes sudo/security policies or collector services. It scopes the
+object to the workload PID, requires operation hooks/readiness, checks TCP Accept
+and UDP send/receive modes, zero-length/truncated datagrams, nonblocking/oversize
+negatives, duplicate rows and emptied context maps, then detaches within 20 seconds.
+The observer accepts at most 120 seconds. Evidence stays in the fresh VM-local output;
+use `--baseline` only for strict comparison of an older object lacking the new
+UDP-send return hook/map (it does not waive failed observation checks).
+
+Passing this proves actual-object scope, **not** managed identity, normal ETL,
+installed-package behavior, exact packet/byte conservation or release readiness.
+Current core UDP bytes mean successful **protocol-function return**, not final
+syscall success or requested length. TCP remains requested-entry/sampled. Per-socket
+one-second send/connected-receive sampling stays enabled; peer-buffer UDP receives
+remain unsampled. Wildcard non-loopback local addresses and socket-pointer reuse
+need separate qualification; incomplete raw observations are not retroactively fixed.
+
+### Field-friendly workload
+
 With the collector **already running**, generate a tiny identifiable dataset:
 
 ```bash
