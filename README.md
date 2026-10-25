@@ -50,7 +50,7 @@ Linux sensor work currently centers on eBPF tracers under `wintap/wintap/platfor
 
 ## Technology
 
-`.NET 8` | `Esper CEP` | `DuckDB` | `Parquet` | `eBPF` | `MEF`
+`.NET 10` | `Esper CEP` | `DuckDB` | `Parquet` | `eBPF` | `MEF`
 
 ## Release
 

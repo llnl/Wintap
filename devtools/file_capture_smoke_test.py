@@ -15,7 +15,7 @@ Examples:
 
   sudo python3 devtools/file_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 180
 """
 

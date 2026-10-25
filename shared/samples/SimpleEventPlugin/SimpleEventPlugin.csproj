@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<AssemblyName>SimpleEventPlugin</AssemblyName>
 		<RootNamespace>SimpleEventPlugin</RootNamespace>
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -21,7 +21,7 @@
 	  <ProjectReference Include="..\..\WintapAPI\WintapAPI.csproj" />
 	</ItemGroup>
 
-	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(OS)' == 'Windows_NT' and '$(SolutionDir)' != '' and '$(SolutionDir)' != '*Undefined*'">
 		<Exec Command="md &quot;$(SolutionDir)\..\Wintap\Plugins\SimpleEventPlugin&quot; 2&gt; nul&#xD;&#xA;copy &quot;$(TargetDir)*.dll&quot; &quot;$(SolutionDir)\..\Wintap\Plugins\SimpleEventPlugin\&quot;" />
 	</Target>
 </Project>

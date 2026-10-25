@@ -21,6 +21,17 @@ Examples below assume you are already in `wintap/wintap` unless noted otherwise.
 
 ## Recommended Commands
 
+Use the repository `global.json` SDK baseline **10.0.402**. All 13 C# projects
+target .NET 10 (Windows projects use Windows-qualified TFMs); the Makefile defaults
+to `net10.0`. Linux package builds enforce the exact SDK before cleanup/publish;
+see [`../Lintap/packaging/README.md`](../Lintap/packaging/README.md).
+Distribution-selected SDK patches are not substitutes for package qualification.
+
+The current Windows release workflow uses `installer/Wintap.Installer.wixproj`.
+The two Visual Studio `.vdproj` files retained in `Wintap.sln` are legacy installer
+snapshots with stale payload paths; do not use them to package .NET 10. Windows
+MSI build/live acceptance remains separate from Linux RPM qualification.
+
 Build everything:
 
 ```bash

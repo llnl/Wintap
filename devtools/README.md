@@ -172,7 +172,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/network_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -232,7 +232,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/process_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -314,7 +314,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/file_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -337,7 +337,7 @@ cat > /tmp/etlconfig-soak.json <<EOF
   "SerializationIntervalSec": 10
 }
 EOF
-sudo env WINTAP_CONFIG_PATH=/tmp/etlconfig-soak.json dotnet /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll
+sudo env WINTAP_CONFIG_PATH=/tmp/etlconfig-soak.json dotnet /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll
 ```
 
 In another shell, run 5 rounds (every ~6 minutes):

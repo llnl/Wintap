@@ -2,7 +2,7 @@
 EBPF_DIR = platform/linux/sensor/ebpf/tracers
 DOTNET_PROJ = Lintap.csproj
 DOTNET_CONFIG ?= Debug
-DOTNET_TFM ?= net8.0
+DOTNET_TFM ?= net10.0
 NATIVE_BUILD_ROOT ?= /tmp/lintap-build/$(notdir $(CURDIR))
 DOTNET_OUT_DIR ?= bin/$(DOTNET_CONFIG)/$(DOTNET_TFM)
 LINTAP_DLL ?= $(DOTNET_OUT_DIR)/Lintap.dll

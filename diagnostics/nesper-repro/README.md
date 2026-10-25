@@ -6,7 +6,7 @@ Run from the repo root:
 
 ```bash
 dotnet build diagnostics/nesper-repro/nesper-repro.csproj
-dotnet diagnostics/nesper-repro/bin/Debug/net8.0/nesper-repro.dll
+dotnet diagnostics/nesper-repro/bin/Debug/net10.0/nesper-repro.dll
 ```
 
 On the Fedora VM shared mount, the repro fails even for:

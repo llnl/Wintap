@@ -8,6 +8,8 @@
     <NativeBuildRoot Condition="'$(NativeBuildRoot)' != ''">$([MSBuild]::EnsureTrailingSlash('$(NativeBuildRoot)'))</NativeBuildRoot>
     <BaseOutputPath Condition="'$(NativeBuildRoot)' != '' and '$(BaseOutputPath)' == ''">$(NativeBuildRoot)$(MSBuildProjectName)/bin/</BaseOutputPath>
     <BaseIntermediateOutputPath Condition="'$(NativeBuildRoot)' != '' and '$(BaseIntermediateOutputPath)' == ''">$(NativeBuildRoot)$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+    <!-- Redirecting outputs must not compile stale repo-local net8/generated sources. -->
+    <DefaultItemExcludes Condition="'$(NativeBuildRoot)' != ''">$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup Label="Supply chain">
