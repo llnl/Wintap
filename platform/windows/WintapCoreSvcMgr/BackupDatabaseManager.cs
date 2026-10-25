@@ -26,8 +26,8 @@ namespace WintapCoreSvcMgr.Database
         private bool _disposed = false;
 
         // File path
-        private string RECOVERY_DB_PATH = @"C:\ProgramData\Wintap\ProcessTree\recovery.duckdb";
-        private string MAIN_DB_PATH = @"C:\ProgramData\Wintap\ProcessTree\main.duckdb";
+        private string RECOVERY_DB_PATH;
+        private string MAIN_DB_PATH;
         
         private string DB_PATH;
         private DuckDBConnection _connection;
@@ -41,8 +41,8 @@ namespace WintapCoreSvcMgr.Database
         public BackupDatabaseManager(DatabaseTargetEnum target)
         {
             string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-            RECOVERY_DB_PATH = Path.Combine(programData, "Wintap", "ProcessTree", "recovery.duckdb");
-            MAIN_DB_PATH = Path.Combine(programData, "Wintap", "ProcessTree", "main.duckdb");
+            RECOVERY_DB_PATH = Path.Combine(programData, "Wintap", "ProcessTree", ProcessIdentity.RecoveryStoreFileName);
+            MAIN_DB_PATH = Path.Combine(programData, "Wintap", "ProcessTree", ProcessIdentity.MainStoreFileName);
 
 
             DB_PATH = MAIN_DB_PATH;

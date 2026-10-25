@@ -36,7 +36,7 @@
     <PackageVersion Include="NEsper.Runtime"                            Version="8.9.1" />   <!-- watch: brings Castle, Common.Logging, Crc32.NET, Roslyn -->
     <PackageVersion Include="NEsper.Compiler"                           Version="8.9.1" />
     <PackageVersion Include="NEsper.Compat"                             Version="8.9.1" />
-    <PackageVersion Include="DuckDB.NET.Data.Full"                      Version="1.5.6" />   <!-- 1.5.6.1 too new on 2026-10-22; watch -->
+    <PackageVersion Include="DuckDB.NET.Data.Full"                      Version="1.5.6.1" /> <!-- user-approved 2026-10-24 maintenance exception to 14-day age gate; native engine remains 1.5.6 -->
     <PackageVersion Include="Parquet.Net"                               Version="6.1.0" />   <!-- major jump from 4.24; watch -->
     <PackageVersion Include="AWSSDK.S3"                                 Version="4.0.104" /> <!-- v4: set WHEN_REQUIRED checksums for S3-compatible stores -->
     <PackageVersion Include="Newtonsoft.Json"                           Version="13.0.4" />  <!-- transitional; STJ later -->

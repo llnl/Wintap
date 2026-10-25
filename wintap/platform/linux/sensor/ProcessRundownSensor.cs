@@ -61,14 +61,9 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
         }
 
-        private bool IsUsableProcess(ProcReader.ProcessInfo processInfo)
+        internal static bool IsUsableProcess(ProcReader.ProcessInfo processInfo)
         {
             if (!processInfo.Exists)
-            {
-                return false;
-            }
-
-            if (processInfo.Pid == StateManager.WintapPID)
             {
                 return false;
             }
@@ -76,11 +71,14 @@ namespace gov.llnl.wintap.platform.linux.collect
             return processInfo.Pid <= int.MaxValue;
         }
 
-        private WintapMessage CreateRefreshMessage(ProcReader.ProcessInfo processInfo)
+        internal WintapMessage CreateRefreshMessage(ProcReader.ProcessInfo processInfo)
         {
-            DateTime startTimeUtc = processInfo.StartTimeUtc == default
-                ? DateTime.UtcNow
-                : processInfo.StartTimeUtc.ToUniversalTime();
+            if (!IsUsableProcess(processInfo) || processInfo.StartTimeUtc == default)
+            {
+                // Snapshot time is not process birth; do not fabricate an instance.
+                return null;
+            }
+            DateTime startTimeUtc = processInfo.StartTimeUtc.ToUniversalTime();
 
             int pid = (int)processInfo.Pid;
             string commandLine = processInfo.CommandLine ?? string.Empty;

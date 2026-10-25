@@ -26,6 +26,7 @@ using static gov.llnl.wintap.core.etl.shared.Utilities;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 
 namespace gov.llnl.wintap.core.etl.extract
@@ -81,6 +82,15 @@ namespace gov.llnl.wintap.core.etl.extract
         private long acceptedEvents;
         private long peakQueueDepth;
         private SerializerFlushWorker flushWorker;
+        private int activeCallbacks;
+        private int shutdownCompleted;
+        private readonly SerializerCallbackAdmission callbackAdmission = new();
+        private readonly List<EPStatement> registeredStatements = new();
+        private bool requireShutdownBarrier;
+
+        private void TraceBoundary(string stage, bool? complete = null) =>
+            AttributionTrace.RecordBoundary(stage, SensorName, Interlocked.Read(ref sensorDataDepth),
+                Interlocked.Read(ref acceptedEvents), Volatile.Read(ref activeCallbacks), complete);
 
         protected Serializer(string[] queries)
         {
@@ -144,6 +154,7 @@ namespace gov.llnl.wintap.core.etl.extract
         /// </summary>
         internal bool IsEnabled { get; set; }
         internal string SensorName { get; set; }
+        internal bool QueryRegistrationSucceeded { get; private set; } = true;
 
 
         /// <summary>
@@ -170,6 +181,7 @@ namespace gov.llnl.wintap.core.etl.extract
         /// <exception cref="Exception"></exception>
         internal void Save(ExpandoObject obj)
         {
+            AttributionTrace.RecordRow(obj, "serializer-observed");
             dynamic dobj = (dynamic)obj;
             if (!String.IsNullOrWhiteSpace(dobj.PidHash))
             {
@@ -178,8 +190,9 @@ namespace gov.llnl.wintap.core.etl.extract
                     while (Interlocked.Read(ref sensorDataDepth) >= maxInMemoryEvents && backlogDropPolicy == DropPolicy.DropOldest)
                     {
                         // Make room by evicting the oldest queued item.
-                        if (sensorData.TryDequeue(out _))
+                        if (sensorData.TryDequeue(out var evicted))
                         {
+                            AttributionTrace.RecordRow(evicted, "serializer-evicted");
                             Interlocked.Decrement(ref sensorDataDepth);
                             Interlocked.Increment(ref droppedDueToBacklog);
                             gov.llnl.wintap.core.infrastructure.EventChannel.AddDroppedEvents(1);
@@ -193,6 +206,7 @@ namespace gov.llnl.wintap.core.etl.extract
                     if (Interlocked.Read(ref sensorDataDepth) >= maxInMemoryEvents)
                     {
                         // Drop the newest event.
+                        AttributionTrace.RecordRow(obj, "serializer-capacity-refused");
                         Interlocked.Increment(ref droppedDueToBacklog);
                         gov.llnl.wintap.core.infrastructure.EventChannel.AddDroppedEvents(1);
 
@@ -210,6 +224,9 @@ namespace gov.llnl.wintap.core.etl.extract
                 this.sensorData.Enqueue(obj);
                 long queueDepth = Interlocked.Increment(ref sensorDataDepth);
                 Interlocked.Increment(ref acceptedEvents);
+                AttributionTrace.RecordRow(obj, "serializer-accepted");
+                if (Volatile.Read(ref shutdownCompleted) != 0)
+                    AttributionTrace.RecordRow(obj, "serializer-accepted-after-shutdown");
                 long peak = Interlocked.Read(ref peakQueueDepth);
                 while (queueDepth > peak)
                 {
@@ -221,6 +238,7 @@ namespace gov.llnl.wintap.core.etl.extract
             }
             else
             {
+                AttributionTrace.RecordRow(obj, "serializer-invalid-identity");
                 throw new Exception("NULL_PIDHASH");
             }
         }
@@ -279,6 +297,7 @@ namespace gov.llnl.wintap.core.etl.extract
         /// </summary>
         internal bool Shutdown(TimeSpan timeout)
         {
+            TraceBoundary("serializer-shutdown-begin");
             IsEnabled = false;
             Stopwatch deadline = Stopwatch.StartNew();
 
@@ -300,11 +319,27 @@ namespace gov.llnl.wintap.core.etl.extract
             bool queueDrained = Interlocked.Read(ref sensorDataDepth) == 0;
             bool writerDrained = remaining > TimeSpan.Zero && parquetWriter.WaitForCompletion(remaining);
             bool complete = queueDrained && writerDrained;
+            Volatile.Write(ref shutdownCompleted, 1);
+            TraceBoundary("serializer-shutdown-end", complete);
             WintapLogger.Log.Append(
                 $"{SensorName}: serializer_shutdown complete={complete},remaining={Interlocked.Read(ref sensorDataDepth)},parquet_backlog={parquetWriter.Backlog},parquet_failures={parquetWriter.FailureCount},parquet_dropped_batches={parquetWriter.DroppedBatchCount},accepted_total={Interlocked.Read(ref acceptedEvents)},dropped_total={Interlocked.Read(ref droppedDueToBacklog)},elapsed_ms={deadline.ElapsedMilliseconds}",
                 complete ? LogLevel.Info : LogLevel.Warn);
             return complete;
         }
+
+        internal Task CloseCallbacks()
+        {
+            TraceBoundary("serializer-callback-cutoff-begin");
+            // Close admission before removing handlers: an already-dispatched
+            // callback must either join as in-flight or have explicit refusal evidence.
+            Task joined = callbackAdmission.Close();
+            foreach (EPStatement statement in registeredStatements)
+                statement.Events -= ProcStatement_Events;
+            TraceBoundary("serializer-listeners-detached");
+            return joined;
+        }
+
+        internal void TraceCallbacksJoined() => TraceBoundary("serializer-callbacks-joined");
         #endregion
 
         #region private
@@ -313,6 +348,8 @@ namespace gov.llnl.wintap.core.etl.extract
         {
             IsEnabled = false;
             this.SensorName = this.GetType().Name.ToLower();
+            requireShutdownBarrier = EtlShutdownBarrier.Enabled(OperatingSystem.IsLinux(),
+                Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_ETL_SHUTDOWN_BARRIER"));
             ETLConfig etlConfig = Utilities.GetETLConfig();
 
             parquetWriter = new ParquetWriter();
@@ -453,6 +490,7 @@ namespace gov.llnl.wintap.core.etl.extract
                         if (sensorData.TryDequeue(out msg))
                         {
                             tempQueue.Add(msg);
+                            AttributionTrace.RecordRow(msg, "serializer-drained");
                             Interlocked.Decrement(ref sensorDataDepth);
                             drained++;
                         }
@@ -559,17 +597,27 @@ namespace gov.llnl.wintap.core.etl.extract
 
         private void registerQuery(string queryPath, string queryName)
         {
+            AttributionTrace.RecordQuery("query-registration-begin", SensorName, queryPath, queryName);
             try
             {
                 string esperQuery = readQueryFromFile(queryPath);
-                foreach (EPStatement statement in gov.llnl.wintap.core.infrastructure.EventChannel.CompileDeploy(esperQuery, queryName).Statements)
+                var deployment = gov.llnl.wintap.core.infrastructure.EventChannel.CompileDeploy(esperQuery, queryName);
+                if (deployment.Statements.Length == 0)
+                    throw new InvalidOperationException("EPL deployment has no statements");
+                AttributionTrace.RecordQuery("query-deployed", SensorName, queryPath, queryName);
+                foreach (EPStatement statement in deployment.Statements)
                 {
                     statement.Events += ProcStatement_Events;
+                    registeredStatements.Add(statement);
+                    AttributionTrace.RecordQuery("query-listener-attached", SensorName, queryPath, queryName, statement.Name);
                 }
+                AttributionTrace.RecordQuery("query-registration-complete", SensorName, queryPath, queryName);
                 WintapLogger.Log.Append("EPL created and event handlers attached on " + GetType().Name, LogLevel.Debug);
             }
             catch (Exception ex)
             {
+                QueryRegistrationSucceeded = false;
+                AttributionTrace.RecordQuery("query-registration-error", SensorName, queryPath, queryName, error: ex.ToString());
                 WintapLogger.Log.Append("error registering EPL: " + ex.Message, LogLevel.Info);
             }
 
@@ -611,12 +659,31 @@ namespace gov.llnl.wintap.core.etl.extract
 
         private void ProcStatement_Events(object sender, UpdateEventArgs e)
         {
+            if (requireShutdownBarrier && !callbackAdmission.TryEnter())
+            {
+                TraceBoundary("serializer-callback-after-cutoff");
+                if (SensorName == "tcpconnectionserializer" && e.NewEvents != null)
+                    foreach (EventBean eb in e.NewEvents)
+                        AttributionTrace.RecordProjection(eb, "tcp-projection-after-cutoff");
+                return;
+            }
+            Interlocked.Increment(ref activeCallbacks);
+            if (SensorName == "tcpconnectionserializer") TraceBoundary("serializer-callback-begin");
+            try
+            {
             if (e.NewEvents != null)
             {
                 foreach (EventBean eb in e.NewEvents)
                 {
                     HandleSensorEvent(eb);
                 }
+            }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeCallbacks);
+                if (SensorName == "tcpconnectionserializer") TraceBoundary("serializer-callback-end");
+                if (requireShutdownBarrier) callbackAdmission.Exit();
             }
         }
 

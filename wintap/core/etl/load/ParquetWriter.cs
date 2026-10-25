@@ -101,6 +101,7 @@ namespace gov.llnl.wintap.core.etl.load
                             catch (Exception ex)
                             {
                                 Interlocked.Increment(ref writeFailures);
+                                AttributionTrace.RecordRows(dataSet.Data, "parquet-write-error");
                                 WintapLogger.Log.Append($"Error in ParquetWriter worker for {dataSet.SensorName}: {ex.Message}", LogLevel.Info);
                             }
 
@@ -110,16 +111,19 @@ namespace gov.llnl.wintap.core.etl.load
                                 {
                                     FileInfo flushedFile = new FileInfo(fileName);
                                     flushedFile.MoveTo(flushedFile.FullName.Replace(".parquet.active", ".parquet"));
+                                    AttributionTrace.RecordRows(dataSet.Data, "parquet-finalized", flushedFile.FullName);
                                     WintapLogger.Log.Append($" ready for merge: {fileName}", LogLevel.Info);
                                 }
                                 catch (Exception ex)
                                 {
                                     Interlocked.Increment(ref writeFailures);
+                                    AttributionTrace.RecordRows(dataSet.Data, "parquet-rename-error", fileName);
                                     WintapLogger.Log.Append($"ERROR renaming parquet for upload: {ex.Message}", LogLevel.Info);
                                 }
                             }
                             else
                             {
+                                AttributionTrace.RecordRows(dataSet.Data, "parquet-no-file");
                                 WintapLogger.Log.Append($"{dataSet.SensorName}: Call to WRITE returned no parquet data file.", LogLevel.Info);
                             }
                         }
@@ -158,8 +162,10 @@ namespace gov.llnl.wintap.core.etl.load
                 if (backlogDropPolicy == DropPolicy.DropOldest)
                 {
                     // Evict one oldest batch to make room.
-                    if (batches.TryDequeue(out _))
+                    if (batches.TryDequeue(out var evicted))
                     {
+                        if (AttributionTrace.Enabled)
+                            foreach (var set in evicted.Set) AttributionTrace.RecordRows(set.Data, "parquet-batch-evicted");
                         Interlocked.Increment(ref droppedBatches);
                         MarkBatchComplete();
                     }
@@ -167,6 +173,8 @@ namespace gov.llnl.wintap.core.etl.load
                     {
                         Interlocked.Increment(ref droppedBatches);
                         // Nothing to evict; fall back to dropping newest below.
+                        if (AttributionTrace.Enabled)
+                            foreach (var set in batch.Set) AttributionTrace.RecordRows(set.Data, "parquet-batch-refused");
                         var now2 = DateTime.UtcNow;
                         if ((now2 - lastDropLogUtc).TotalSeconds >= 5)
                         {
@@ -181,6 +189,8 @@ namespace gov.llnl.wintap.core.etl.load
                 else
                 {
                     // Drop newest batch
+                    if (AttributionTrace.Enabled)
+                        foreach (var set in batch.Set) AttributionTrace.RecordRows(set.Data, "parquet-batch-refused");
                     Interlocked.Increment(ref droppedBatches);
                     var now = DateTime.UtcNow;
                     if ((now - lastDropLogUtc).TotalSeconds >= 5)
@@ -202,6 +212,9 @@ namespace gov.llnl.wintap.core.etl.load
 
             drained.Reset();
             Interlocked.Increment(ref pendingBatches);
+            // Snapshot before publishing: the worker consumes batch.Set immediately.
+            if (AttributionTrace.Enabled)
+                foreach (var set in batch.Set) AttributionTrace.RecordRows(set.Data, "parquet-batch-enqueue");
             batches.Enqueue(batch);
         }
 
@@ -257,6 +270,7 @@ namespace gov.llnl.wintap.core.etl.load
             long timestamp = DateTime.UtcNow.ToFileTimeUtc() + Convert.ToInt32(applyOffset);
             string fileName = dataSet.ParquetPath + "-" + timestamp + ".parquet.active";  // name will be .active to avoid file contention with the uploader.
             WintapLogger.Log.Append($"{dataSet.SensorName} is writing {dataSet.Data.Count} records to path: {fileName}", LogLevel.Info);
+            AttributionTrace.RecordRows(dataSet.Data, "parquet-write-begin", fileName);
             try
             {
                 ParquetSchema schema = DetermineSchemaFromExpando(dataSet.Data.First());
@@ -269,12 +283,14 @@ namespace gov.llnl.wintap.core.etl.load
             }
             catch (Exception ex)
             {
+                AttributionTrace.RecordRows(dataSet.Data, "parquet-write-attempt-error", fileName);
                 WintapLogger.Log.Append($"Error in ParquetWriter.Write: {ex.Message} ", LogLevel.Info);
                 if (ex.Message.Contains("used by another process"))
                 {
                     WintapLogger.Log.Append($"Retrying write operation...", LogLevel.Info);
                     timestamp = DateTime.UtcNow.ToFileTimeUtc() + 1;
                     fileName = dataSet.ParquetPath + "-" + timestamp + ".parquet.active";  // name will be .active to avoid file contention with the uploader.
+                    AttributionTrace.RecordRows(dataSet.Data, "parquet-write-retry", fileName);
                     WintapLogger.Log.Append($"{dataSet.SensorName} is retrying {dataSet.Data.Count} records to path: {fileName}", LogLevel.Info);
                     try
                     {
@@ -288,6 +304,7 @@ namespace gov.llnl.wintap.core.etl.load
                     }
                     catch (Exception ex2)
                     {
+                        AttributionTrace.RecordRows(dataSet.Data, "parquet-write-retry-error", fileName);
                         WintapLogger.Log.Append($"{SensorName} error on retry of WRITE operation: {ex2.Message}", LogLevel.Info);
                         throw new IOException("Parquet write retry failed.", ex2);
                     }

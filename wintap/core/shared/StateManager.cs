@@ -87,10 +87,15 @@ namespace gov.llnl.wintap.core.shared
             WintapSettings = getWintapSettings();
             SessionId = Guid.NewGuid();
 
-            WintapState wintapState = readState();
-
             WintapLogger.Log.Append($"StateManager is getting AgentId", LogLevel.Info);
-            AgentId = getAgentId(wintapState);
+            string machineId = AgentIdentity.ReadMachineId();
+            if (string.IsNullOrWhiteSpace(machineId))
+                WintapLogger.Log.Append("Agent identity uses hostname-only binding: machine ID unavailable.", LogLevel.Warn);
+            var identity = AgentIdentity.LoadOrCreate(
+                Path.Combine(Env.FileRuntimeRoot, "wintapstate.json"), Environment.MachineName, machineId,
+                Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
+            AgentId = identity.AgentId;
+            WintapLogger.Log.Append($"Agent identity: {identity.Reason}; AgentId={AgentId}; process identity={ProcessIdentity.Version}", LogLevel.Info);
             WintapLogger.Log.Append($"StateManager is refreshing active user info", LogLevel.Info);
             ActiveUser = refreshActiveUser();
             WintapLogger.Log.Append($"StateManager has active user: {ActiveUser}", LogLevel.Info);
@@ -125,8 +130,6 @@ namespace gov.llnl.wintap.core.shared
             }
 #endif
             MachineBootTime = refreshLastBoot();
-
-            writeState(wintapState);
 
             WintapLogger.Log.Append($"StateManager is initialized.", LogLevel.Info);
         }
@@ -247,24 +250,6 @@ namespace gov.llnl.wintap.core.shared
             }
         }
 
-        private Guid getAgentId(WintapState state)
-        {
-            Guid agentId = new Guid();
-            try
-            {
-                agentId = Guid.Parse(state.AgentId);
-            }
-            catch (Exception ex) { }
-
-            if (agentId == new Guid())
-            {
-                WintapLogger.Log.Append("Generating new Agent Id for this sensor.", LogLevel.Info);
-                agentId = Guid.NewGuid();
-                state.AgentId = agentId.ToString();
-            }
-            return agentId;
-        }
-
         public static StateManager State
         {
             get
@@ -380,26 +365,6 @@ namespace gov.llnl.wintap.core.shared
             return localIp; ;
         }
 
-        private void writeState(WintapState state)
-        {
-            string jsonString = JsonConvert.SerializeObject(state);
-            string filePath = Path.Combine(Environment.CurrentDirectory, "wintapstate.json");
-            File.WriteAllText(filePath, jsonString);
-        }
-
-        private WintapState readState()
-        {
-            FileInfo stateInfo = new FileInfo(Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
-            WintapState wintapState = new WintapState();
-            if (stateInfo.Exists)
-            {
-                string readJsonString = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
-                WintapState deserializedState = JsonConvert.DeserializeObject<WintapState>(readJsonString);
-                wintapState = deserializedState;
-            }
-
-            return wintapState;
-        }
     }
 
     public class DiskVolume

@@ -457,6 +457,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 message.CorrelationId = "";
                 message.PidHash = "";
                 message.ProcessName = ReadNullTerminatedString(data, CommonCommOffset, 16) ?? "unknown";
+                AttributionTrace.Record(message, "file-producer-prepared");
 
                 // Stamp current-process identity while the producer is still live,
                 // so deep sender backlog does not turn short-lived processes into
@@ -472,6 +473,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                                           message.ProcessName, message.PidHash,
                                           Environment.TickCount64))
                 {
+                    AttributionTrace.Record(message, "file-aggregate-folded");
                     MaybeLogCounters();
                     return 0;
                 }
@@ -1045,6 +1047,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                         continue;
                     }
 
+                    AttributionTrace.Record(queued.Message, "file-sender-dequeued");
                     if ((Interlocked.Increment(ref _sendSampleCounter) & (SendSampleInterval - 1)) == 0)
                     {
                         long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1068,6 +1071,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                         EventChannel.Send(queued.Message);
                     }
                     CountByOp(_userEmittedByOp, queued.OpIndex);
+                    AttributionTrace.Record(queued.Message, "file-sender-returned");
                     MaybeLogCounters();
                 }
                 catch (InvalidOperationException)
@@ -1138,6 +1142,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     LastSeenEventTime = lastUtc.ToFileTimeUtc(),
                 };
 
+                AttributionTrace.Record(message, "file-aggregate-summary");
                 if (!TryEnqueueMessage(message, GetOpIndex(entry.OpType)))
                 {
                     Interlocked.Increment(ref _aggSummaryEnqueueFailures);
@@ -1154,16 +1159,19 @@ namespace gov.llnl.wintap.platform.linux.collect
         {
             if (_sendQueue.IsAddingCompleted)
             {
+                AttributionTrace.Record(message, "file-sender-closed-refused");
                 return false;
             }
 
             if (_sendQueue.TryAdd(new QueuedFileEvent(message, opIndex)))
             {
                 UpdateQueueHighWatermark(_sendQueue.Count);
+                AttributionTrace.Record(message, "file-sender-admitted");
                 return true;
             }
 
             Interlocked.Increment(ref _queueDrops);
+            AttributionTrace.Record(message, "file-sender-capacity-refused");
             EventChannel.AddDroppedEvents(1);
             return false;
         }

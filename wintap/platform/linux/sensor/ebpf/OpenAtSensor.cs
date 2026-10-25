@@ -94,9 +94,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 message.ActivityId = "";
                 message.CorrelationId = "";
 
-                // Pre-populate PidHash and ProcessName to prevent EventChannel from doing lookup
-                // This avoids the "Sequence contains no elements" error
-                message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, message.EventTime) ?? "";
+                // File-event time is not process-start time. Core resolves attribution.
+                message.PidHash = "";
                 message.ProcessName = evt.GetComm() ?? "unknown";
 
                 WintapLogger.Log.Append(

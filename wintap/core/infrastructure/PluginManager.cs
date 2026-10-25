@@ -123,6 +123,9 @@ namespace gov.llnl.wintap.core.infrastructure
 
         #region Public Methods
 
+        // Disabled ETL is an explicit bypass. A failed requested Start is not.
+        internal Task<bool> ETLReady => etl == null ? Task.FromResult(true) : etl.Ready;
+
         /// <summary>
         /// Registers and initializes all discovered plugins.
         /// Async to support MCP server initialization.
@@ -253,6 +256,13 @@ namespace gov.llnl.wintap.core.infrastructure
             }
 
             return etl.Shutdown();
+        }
+
+        internal async Task<bool> ShutdownEtlWithBarrierAsync(CancellationToken cancellationToken)
+        {
+            if (!doETL || etl == null || Interlocked.Exchange(ref etlStopped, 1) != 0)
+                return true;
+            return await etl.ShutdownWithBarrierAsync(cancellationToken);
         }
 
         #endregion

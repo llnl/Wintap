@@ -27,6 +27,7 @@ namespace gov.llnl.wintap.core.etl.extract
             activeNics = Utilities.GetActiveNICs();
             networkEventTimer = new System.Timers.Timer { Interval = 60000 };
             networkEventTimer.Elapsed += NetworkEventTimer_Elapsed;
+            AttributionTrace.RecordQuery("tcp-callback-initialized", SensorName, null, null);
         }
 
         private void NetworkEventTimer_Elapsed(object sender, ElapsedEventArgs e)
@@ -36,6 +37,7 @@ namespace gov.llnl.wintap.core.etl.extract
 
         protected override void HandleSensorEvent(EventBean sensorEvent)
         {
+            AttributionTrace.RecordProjection(sensorEvent, "tcp-projection-enter");
             try
             {
                 base.HandleSensorEvent(sensorEvent);
@@ -65,12 +67,15 @@ namespace gov.llnl.wintap.core.etl.extract
                 flatMsg.SourceIpAddressString = sensorEvent["srcIp"].ToString();
                 flatMsg.DestinationIpAddressString = sensorEvent["destIp"].ToString();
 
+                AttributionTrace.RecordProjection(sensorEvent, "tcp-projection-row-ready", (ExpandoObject)flatMsg);
                 this.Save(flatMsg);
+                AttributionTrace.RecordProjection(sensorEvent, "tcp-projection-return", (ExpandoObject)flatMsg);
                 sensorEvent = null;
                 flatMsg = null;
             }
             catch (Exception ex)
             {
+                AttributionTrace.RecordProjection(sensorEvent, "tcp-projection-error", error: ex.ToString());
                 WintapLogger.Log.Append("Error creating TcpConnection object on pid: " + sensorEvent["PID"] + ",  exception: " + ex.ToString(), LogLevel.Info);
             }
         }

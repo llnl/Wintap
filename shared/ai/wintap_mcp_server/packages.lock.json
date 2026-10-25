@@ -4,12 +4,12 @@
     "net10.0": {
       "DuckDB.NET.Data.Full": {
         "type": "Direct",
-        "requested": "[1.5.6, )",
-        "resolved": "1.5.6",
-        "contentHash": "9FPuQZKtKGT9lr6GfOHGNJWXsQKjRBnWdPus6/1e/f5R106DszaxLuRLCDDwlgy6XdC0Lgm4H9zqV6LkZ7gTQw==",
+        "requested": "[1.5.6.1, )",
+        "resolved": "1.5.6.1",
+        "contentHash": "I+pTZK34r63v+luh85DQwb64sgJ9jk31fZEiulGpog1XSJ5cwWcVcTleZHYJR+8ohvOXXminagL4EPJ3XGWF6w==",
         "dependencies": {
           "Apache.Arrow": "23.0.0",
-          "DuckDB.NET.Bindings.Full": "1.5.6"
+          "DuckDB.NET.Bindings.Full": "1.5.6.1"
         }
       },
       "Microsoft.Extensions.Hosting": {
@@ -73,8 +73,8 @@
       },
       "DuckDB.NET.Bindings.Full": {
         "type": "Transitive",
-        "resolved": "1.5.6",
-        "contentHash": "phg/EJHrcG+bqgD/EnDryWlcFtL6L09Wn9o1UVoERTp7OnAmU5AyCSKreZUkFHacNRlxlAfAIJ2IGqJ2R6O18Q=="
+        "resolved": "1.5.6.1",
+        "contentHash": "Lk/w0DHTr2MjhTFnSkO0+al6FpdZBfxXESDzULKuNVrIOI6r+nUaFE4rlOo0L+ZgBSTVd6qqHriGL7gu4OSJDA=="
       },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "Transitive",
@@ -347,11 +347,11 @@
         "contentHash": "DkNjtQyPR5Ud/zHnWHdsOuKbFRL9nIC92Q76z0NmHVDoQm40toLtsGFTIWq7toBoVa6fo/DInL3PLxY3Asixyw=="
       }
     },
-    "net10.0/win-x64": {
+    "net10.0/linux-arm64": {
       "DuckDB.NET.Bindings.Full": {
         "type": "Transitive",
-        "resolved": "1.5.6",
-        "contentHash": "phg/EJHrcG+bqgD/EnDryWlcFtL6L09Wn9o1UVoERTp7OnAmU5AyCSKreZUkFHacNRlxlAfAIJ2IGqJ2R6O18Q=="
+        "resolved": "1.5.6.1",
+        "contentHash": "Lk/w0DHTr2MjhTFnSkO0+al6FpdZBfxXESDzULKuNVrIOI6r+nUaFE4rlOo0L+ZgBSTVd6qqHriGL7gu4OSJDA=="
       },
       "System.Diagnostics.EventLog": {
         "type": "CentralTransitive",

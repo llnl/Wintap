@@ -6,74 +6,17 @@
 
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared;
-using System.Security.Cryptography;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace gov.llnl.wintap.platform.windows.collect.etw.helpers
 {
     internal class ProcessHash
     {
-        private static readonly string context = "llnl";
-        private static readonly string msgType = "Process";
-
-        internal string GenPidHash(int _pid, long _eventTime)
+        internal string GenPidHash(int pid, long processStartFileTimeUtc)
         {
-            
-            return GenKeyForProcess(context, Environment.MachineName, StateManager.AgentId, _pid, _eventTime, msgType);
-        }
-
-        internal string GenKeyForProcess(string inContext, string inHostName, Guid agentId, int inPid, long inFirstEventTime, string msgType)
-        {
-            // Get the attribute key hash
-            String attrKey = GenAttrKeyForProcess_ID(inContext, inHostName, agentId.ToString(), inPid, inFirstEventTime);
-
-            // Add the entity name
-            StringBuilder preImage = new StringBuilder();
-            preImage.Append("N`");
-            preImage.Append("Process");
-            preImage.Append("`");
-            preImage.Append(attrKey);
-            preImage.Append("`");
-
-            // Return as a hash
-            return GetHash(preImage.ToString());
-        }
-
-        private string GenAttrKeyForProcess_ID(string inContext
-         , string inHostName
-         , string inAgentId
-         , int inPid
-         , long inFirstEventTime
-         )
-        {
-            StringBuilder preImage = new StringBuilder(9999);
-            preImage.Append("Process_ID`");
-            preImage.Append(inContext);
-            preImage.Append("`");
-            preImage.Append(inFirstEventTime);
-            preImage.Append("`");
-            preImage.Append(inHostName);
-            preImage.Append("`");
-            preImage.Append(inAgentId);
-            preImage.Append("`");
-            preImage.Append(inPid);
-            preImage.Append("`");
-            return GetHash(preImage.ToString());
-        }
-
-        private string GetHash(string preImage)
-        {
-            byte[] result = MD5.HashData(Encoding.UTF8.GetBytes(preImage));
-            StringBuilder hashStr = new StringBuilder(9999);
-            for (int i = 0; i < result.Length; i++)
-            {
-                hashStr.Append(result[i].ToString("X2"));
-            }
-            return hashStr.ToString();
+            return ProcessIdentity.Compute(Environment.MachineName, pid, processStartFileTimeUtc);
         }
 
         /// <summary>

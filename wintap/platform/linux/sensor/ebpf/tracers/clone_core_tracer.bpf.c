@@ -2,13 +2,15 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 
-// Same event ABI as clone_tracer.bpf.c; classification does not depend on
+// Retains clone_tracer.bpf.c's 48-byte prefix; extended birth evidence follows.
+// Classification does not depend on
 // optional syscall hooks or the clone/clone3 userspace argument layout.
 struct clone_event {
     __u32 parent_pid, parent_uid, parent_gid;
     char parent_comm[16];
     __u32 child_pid;
     __u64 timestamp_ns, clone_flags;
+    __u64 start_boot_ns;
 };
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -34,6 +36,9 @@ int trace_process_fork(struct bpf_raw_tracepoint_args *ctx)
     BPF_CORE_READ_INTO(&event->parent_comm, parent, comm);
     event->child_pid = tgid;
     event->timestamp_ns = bpf_ktime_get_ns();
+    event->start_boot_ns = 0;
+    if (bpf_core_field_exists(child->start_boottime))
+        event->start_boot_ns = BPF_CORE_READ(child, start_boottime);
     event->clone_flags = 0; // Not needed: child pid/tgid is authoritative.
     bpf_ringbuf_submit(event, 0);
     return 0;

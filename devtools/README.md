@@ -2,6 +2,29 @@
 
 This directory contains small utilities for validating and troubleshooting Wintap, Mactap, and Lintap deployments.
 
+## Experimental short-lived attribution A/B rounds
+
+`attribution_experiment.py` copies the installed package and a candidate build into
+private roots and exercises manifest-recorded fork/file/exit cohorts. It never
+installs or restarts the service. Requires native Linux/root and space for copied
+binaries. Default: six rounds (old/candidate normal and missing-birth capture, then
+candidate doubled-burst/restart). `--rounds` selects a subset; `--settle-seconds`
+controls post-workload settling, not shutdown correctness. `fixed-legacy-exit`
+substitutes a no-start exit object **only in a private copy**. Evidence is not overwritten.
+`--experiment-batch-drain` enables an experimental 11s Esper-window wait **after
+producer shutdown**; default runtime shutdown behavior remains unchanged. This
+isolates final-batch loss from upstream drops, not a release-ready general drain API.
+For a same-binary comparison, select `--rounds fixed-missing-birth,fixed-batch-drain`
+without the global flag: only the latter enables the barrier. `--shutdown-timeout`
+sets the observation deadline; forced termination is always recorded as a failed gate.
+
+Candidate `WINTAP_EXPERIMENT_LIFECYCLE_SHADOW_PATH` enables bounded exit-only JSONL:
+experimental ≤1s lifetime rule, weak role labels, numeric UID and clock/start evidence.
+No benign verdicts, early role timeline, suppression, raw-schema change or deployment
+approval is implied. Compare canonical inputs, unresolved rows, actual birth coverage
+and conserved events—not just fewer orphan hashes. Evidence/analysis:
+`../Wintap-Analytics/wiki/work/host-process-identity-patch/experiment_results.md`.
+
 ## Portable smoke run manifests and results dashboard
 
 The named workload, process/file/network capture tests, clone trace/pipeline/package
@@ -241,6 +264,39 @@ local=192.168.252.9:37804 -> remote=104.20.23.154:80 proto=TCP rows=2
 ```
 
 ## File Activity Smoke Test
+
+### TCP endpoint normalization smoke
+
+Normal-ETL `network_capture_smoke_test.py` now includes host-relative endpoint
+confirmation by default. `--no-verify-endpoints` opts out explicitly; direct-mode
+`--start-lintap` defaults to no normalization check (its schema is not normalized).
+The dashboard keeps explicit opt-outs yellow rather than implying full confirmation.
+
+To run only the endpoint cases, without Internet HTTP/DNS stimulus:
+
+```bash
+uv run --no-project --with duckdb python devtools/network_endpoint_smoke_test.py \
+  --data-root /var/log/lintap/data --host-ip 192.168.252.47 --timeout 120
+```
+
+Omit `--host-ip` to choose the host's routed IPv4 interface. This must be an assigned
+non-loopback address; private LAN addresses are fine. Do not use an external NAT
+address that the host cannot bind. Both client and server connect via that address.
+
+Cases: separate client/server PIDs, and one PID owning both socket ends. Require
+Send **and** Recv at each end, stable process identity (distinct hashes for separate
+processes), correct Local/Remote **IP-and-port pairs**, and preserved directed
+SourcePort/DestinationPort. Same-IP/same-PID validation uses the directed ports to
+avoid accepting receive rows accidentally swapped between socket roles. The new
+provenance fields require a rebuilt sensor; old parquet cannot satisfy this gate.
+TCP Accept coverage, receive-byte accuracy, IPv6 collection, and packet-level
+completeness are separate gates, not silently certified here.
+
+The decorated standalone test publishes `network-endpoints` manifests/parquet to
+the SmokeTests dashboard. The normal network smoke combines these selectors with
+its outbound checks. An incomplete/unsupported capture fails the harness rather
+than turning successful workload generation into a capture PASS.
+
 
 `file_capture_smoke_test.py` is an integration smoke test for Linux file activity capture correctness. It generates a small amount of local file activity (create/write/read/delete), waits for parquet output, then queries the parquet files with DuckDB to confirm file-path rows were collected.
 

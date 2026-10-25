@@ -16,6 +16,7 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal class CloneSensor : BaseEbpfSensor
     {
         private ProcessHash _pidHashGenerator;
+        private long monotonicOffset;
         private readonly System.Collections.Generic.List<IntPtr> _additionalLinks = new System.Collections.Generic.List<IntPtr>();
         private const ulong CloneThreadFlag = 0x00010000UL;
         private const ulong VforkSentinelFlags = 0xFFFFFFFFFFFFFFFFUL;
@@ -33,7 +34,9 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         protected override bool OnStarting()
         {
+            monotonicOffset = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
             RuntimeCapabilities.Feature(CapabilityKey, "threadClassification", LoadedTier == "core" ? "kernel-child-pid-tgid" : "best-effort-syscall-flags");
+            RuntimeCapabilities.Feature(CapabilityKey, "birthIdentity", LoadedTier == "core" ? "kernel-task-boottime-or-proc" : "proc-or-explicit-unknown");
             if (LoadedTier != "core")
                 WintapLogger.Log.Append("CLONE_DATA_QUALITY: tracepoint fallback uses best-effort syscall flags; absent hooks or failed flag reads can classify threads as process births. Zero flags are not proof of a process. Review HOST RuntimeCapabilitiesJson.", LogLevel.Warn);
             // CO-RE classifies the child directly; these optional programs exist
@@ -112,6 +115,7 @@ namespace gov.llnl.wintap.platform.linux.collect
         {
             try
             {
+                ulong kernelStartNs = LinuxLifecycleEvidence.ReadCloneStart(data, size.ToUInt64());
                 var evt = Marshal.PtrToStructure<CloneEvent>(data);
 
                 // sched_process_fork fires for thread creation too. Those task IDs are
@@ -141,18 +145,15 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                 string processName = ProcessSensorHelper.ExtractProcessName(executablePath, evt.GetParentComm());
 
-                // Use the child start time for a stable PidHash. For a very
-                // short-lived child /proc may be gone by callback time; retain
-                // the kernel fork timestamp rather than assigning callback
-                // time, which would make earlier file/network events appear to
-                // predate their process identity.
-                DateTime startUtc = childProcData.StartTimeUtc != default
-                    ? childProcData.StartTimeUtc.ToUniversalTime()
-                    : (ProcReader.TryConvertBootNsToUtc(evt.TimestampNs) ?? DateTime.UtcNow);
-                startUtc = ProcReader.NormalizeStartTimeUtc(startUtc);
+                DateTime? startUtc = LinuxLifecycleEvidence.SelectBirthStart(
+                    ProcReader.TryConvertBootNsToUtc(kernelStartNs), childProcData.StartTimeUtc);
+                if (startUtc.HasValue) startUtc = ProcReader.NormalizeStartTimeUtc(startUtc.Value);
+                // Legacy/fallback events without /proc birth retain their
+                // occurrence timestamp, but must not turn it into identity.
+                DateTime occurrenceUtc = KernelTimestampConverter.ToUtcDateTime(evt.TimestampNs, monotonicOffset);
 
                 var message = new WintapMessage(
-                    startUtc,
+                    startUtc ?? occurrenceUtc,
                     (int)evt.ChildPid,
                     WintapMessage.MessageTypeEnum.Process
                 );
@@ -179,9 +180,12 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // Distinguish inherited birth metadata from a later exec image.
                 // Raw observations remain separate; resolver state must not be
                 // downgraded by the independent clone poller arriving late.
-                message.Process.Arguments = "PROC_START_SRC=sched_fork";
+                message.Process.Arguments = "PROC_START_SRC=sched_fork" +
+                    (startUtc.HasValue ? "" : ";PROC_IDENTITY=unresolved-no-start");
 
-                message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, message.EventTime) ?? "";
+                message.PidHash = startUtc.HasValue
+                    ? _pidHashGenerator.GenPidHash(message.PID, startUtc.Value.ToFileTimeUtc())
+                    : _pidHashGenerator.GenPidHash(-1, 0);
                 message.ProcessName = processName;
                 ProcessSensorHelper.EnrichParentProcess(message, _pidHashGenerator);
 

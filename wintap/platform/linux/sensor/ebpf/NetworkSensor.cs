@@ -301,7 +301,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                     };
                 }
 
+                AttributionTrace.Record(message, "network-producer-prepared");
                 EventChannel.Send(message);
+                AttributionTrace.Record(message, "network-producer-send-returned");
                 return 0;
             }
             catch (Exception ex)

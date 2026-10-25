@@ -9,6 +9,119 @@ namespace Wintap.Tests
 {
     public class ProcessResolverTests
     {
+        private static WintapMessage ExitEvidence(int pid, DateTime start, DateTime end)
+            => new WintapMessage(end, pid, WintapMessage.MessageTypeEnum.Process)
+            {
+                ActivityType = WintapMessage.ActivityTypeEnum.Stop,
+                PidHash = gov.llnl.wintap.core.shared.ProcessIdentity.Compute(Environment.MachineName, pid, start.ToFileTimeUtc()),
+                ProcessName = "partial-child",
+                Process = new WintapMessage.ProcessObject { PID = pid, Name = "partial-child", ParentPID = 1 }
+            };
+
+        [Fact]
+        public void ExitEvidenceRecoversOnlyContainingLifetimeWithoutSyntheticBirthOrActiveEntry()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 2, registrationLogSink: (_, _) => { });
+            var stop = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            Assert.True(resolver.RetainExitIdentityEvidence(stop, BaseTime));
+            Assert.Equal(0L, ScalarLong(connection, "SELECT COUNT(*) FROM process"));
+            Assert.False(resolver.TryResolveCurrentProcessAtTime(42, BaseTime, out _));
+            Assert.Null(resolver.ResolveProcessAtTime(42, BaseTime));
+            var identity = resolver.ResolveProcessIdentityAtTime(42, BaseTime.AddMilliseconds(10));
+            Assert.Equal(stop.PidHash, identity.PidHash);
+            Assert.Equal(ProcessRecord.ProcessSourceEnum.exit_evidence, identity.Source);
+            Assert.Null(resolver.ResolveProcessIdentityAtTime(42, BaseTime.AddTicks(-1)));
+            Assert.Null(resolver.ResolveProcessIdentityAtTime(42, BaseTime.AddSeconds(1).AddTicks(1)));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void ExitEvidenceKeepsReusedPidLifetimesSeparateInEitherDeliveryOrder(bool newestFirst)
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 4, registrationLogSink: (_, _) => { });
+            var old = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            var fresh = ExitEvidence(42, BaseTime.AddSeconds(2), BaseTime.AddSeconds(3));
+            foreach (var stop in newestFirst ? new[] { fresh, old } : new[] { old, fresh })
+            {
+                DateTime start = stop == old ? BaseTime : BaseTime.AddSeconds(2);
+                Assert.True(resolver.RetainExitIdentityEvidence(stop, start));
+            }
+            Assert.Equal(old.PidHash, resolver.ResolveProcessIdentityAtTime(42, BaseTime).PidHash);
+            Assert.Equal(fresh.PidHash, resolver.ResolveProcessIdentityAtTime(42, BaseTime.AddSeconds(2)).PidHash);
+            Assert.Null(resolver.ResolveProcessIdentityAtTime(42, BaseTime.AddSeconds(1.5)));
+        }
+
+        [Fact]
+        public void ExitEvidenceRejectsMissingIncorrectOrNoncanonicalInputsAndDisabledCache()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 4, registrationLogSink: (_, _) => { });
+            var stop = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, default));
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, DateTime.SpecifyKind(BaseTime, DateTimeKind.Unspecified)));
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, BaseTime.AddSeconds(2)));
+            stop.PidHash = "fabricated";
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, BaseTime));
+            stop = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            stop.ActivityType = WintapMessage.ActivityTypeEnum.Start;
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, BaseTime));
+            var disabled = new ProcessResolver(connection, 0, registrationLogSink: (_, _) => { });
+            Assert.False(disabled.RetainExitIdentityEvidence(ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1)), BaseTime));
+            Assert.Null(resolver.ResolveProcessIdentityAtTime(42, BaseTime));
+        }
+
+        [Fact]
+        public void ExitEvidenceIsBoundedAndRealLateBirthSupersedesOnlyItsOwnPartialIdentity()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 2, registrationLogSink: (text, _) =>
+                Assert.DoesNotContain("DuckDB registering", text));
+            foreach (int pid in new[] { 41, 42, 43 })
+                Assert.True(resolver.RetainExitIdentityEvidence(ExitEvidence(pid, BaseTime, BaseTime.AddSeconds(1)), BaseTime));
+            Assert.False(resolver.TryResolveExitIdentityEvidence(41, BaseTime, out _));
+            Assert.True(resolver.TryResolveExitIdentityEvidence(42, BaseTime, out _));
+            resolver.TakeHistoricalIdentityCacheCounters(out _, out _, out long evictions, out int entries);
+            Assert.Equal(1, evictions); Assert.Equal(2, entries);
+            var stop = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            resolver.RegisterProcess(stop); // remains an unmatched captured Stop, not a birth
+            Assert.Equal(0L, ScalarLong(connection, "SELECT COUNT(*) FROM process"));
+            var birth = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            birth.ActivityType = WintapMessage.ActivityTypeEnum.Start;
+            birth.EventTime = BaseTime.ToFileTimeUtc();
+            birth.Process.Name = "real-birth";
+            resolver.RegisterProcess(birth);
+            Assert.False(resolver.TryResolveExitIdentityEvidence(42, BaseTime, out _));
+            Assert.True(resolver.TryResolveExitIdentityEvidence(43, BaseTime, out _));
+            Assert.Equal("real-birth", resolver.ResolveProcessIdentityAtTime(42, BaseTime).ProcessName);
+            AssertStoredLifetime(connection, stop.PidHash, BaseTime, BaseTime.AddSeconds(1));
+            Assert.False(resolver.RetainExitIdentityEvidence(stop, BaseTime));
+        }
+
+        [Fact]
+        public void CanonicalPendingExitDoesNotCloseOlderReusedPidBirth()
+        {
+            using var connection = CreateEventStore();
+            var resolver = new ProcessResolver(connection, 4, registrationLogSink: (_, _) => { });
+            var freshStop = ExitEvidence(42, BaseTime.AddSeconds(2), BaseTime.AddSeconds(3));
+            Assert.True(resolver.RetainExitIdentityEvidence(freshStop, BaseTime.AddSeconds(2)));
+            resolver.RegisterProcess(freshStop);
+            var oldBirth = ExitEvidence(42, BaseTime, BaseTime.AddSeconds(1));
+            oldBirth.ActivityType = WintapMessage.ActivityTypeEnum.Start;
+            oldBirth.EventTime = BaseTime.ToFileTimeUtc();
+            resolver.RegisterProcess(oldBirth);
+            AssertStoredLifetime(connection, oldBirth.PidHash, BaseTime, null);
+            Assert.True(resolver.TryResolveExitIdentityEvidence(42, BaseTime.AddSeconds(2), out _));
+            var freshBirth = ExitEvidence(42, BaseTime.AddSeconds(2), BaseTime.AddSeconds(3));
+            freshBirth.ActivityType = WintapMessage.ActivityTypeEnum.Start;
+            freshBirth.EventTime = BaseTime.AddSeconds(2).ToFileTimeUtc();
+            resolver.RegisterProcess(freshBirth);
+            AssertStoredLifetime(connection, freshBirth.PidHash, BaseTime.AddSeconds(2), BaseTime.AddSeconds(3));
+            Assert.False(resolver.TryResolveExitIdentityEvidence(42, BaseTime.AddSeconds(2), out _));
+        }
+
         [Fact, Trait("Category", "clone-validation")]
         public void UnmarkedDuplicateStart_CharacterizesExistingMetadataOverwrite()
         {
@@ -356,7 +469,7 @@ namespace Wintap.Tests
             drop.CommandText = "DROP TABLE process";
             drop.ExecuteNonQuery();
             Assert.Equal("missing_identity", resolver.ReadAttributedProcessPath(hash, 42).Status);
-            string sentinel = new gov.llnl.wintap.core.shared.helpers.ProcessHash().GenKeyForProcess("llnl", Environment.MachineName, Guid.Empty, -1, 0, "Process");
+            string sentinel = new gov.llnl.wintap.core.shared.helpers.ProcessHash().GenPidHash(-1, 0);
             Assert.Equal("missing_identity", resolver.ReadAttributedProcessPath(sentinel, 42).Status);
             Assert.Equal("lookup_failed", resolver.ReadAttributedProcessPath("A", 42).Status);
         }

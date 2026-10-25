@@ -461,7 +461,7 @@ namespace gov.llnl.wintap.platform.linux.collect
             EventChannel.TryPopulateCurrentProcessIdentity(message);
             if (string.IsNullOrWhiteSpace(message.PidHash))
             {
-                message.PidHash = _pidHashGenerator.GenPidHash(pid, fileTimeUtc);
+                message.PidHash = _pidHashGenerator.GenPidHash(-1, 0);
             }
             return message;
         }

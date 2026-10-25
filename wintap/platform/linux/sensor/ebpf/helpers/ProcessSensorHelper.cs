@@ -1,6 +1,5 @@
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.shared.helpers;
-using gov.llnl.wintap.platform.linux.infrastructure;
 using System;
 using System.IO;
 

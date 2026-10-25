@@ -21,6 +21,10 @@ struct exit_event {
     
     // Exit information
     __s32 exit_code;
+    // Extended 64-byte ABI; preserve the legacy 48-byte prefix. Separate clocks:
+    // boottime matches /proc start identity; monotonic matches timestamp_ns.
+    __u64 start_boot_ns;
+    __u64 start_monotonic_ns;
 };
 
 // Ring buffer map
@@ -78,6 +82,10 @@ int trace_process_exit(struct sched_exit_args *ctx)
 
     // Kernel stores wait status in task->exit_code.
     event->exit_code = BPF_CORE_READ(task, exit_code);
+    event->start_boot_ns = 0;
+    if (bpf_core_field_exists(task->start_boottime))
+        event->start_boot_ns = BPF_CORE_READ(task, start_boottime);
+    event->start_monotonic_ns = BPF_CORE_READ(task, start_time);
     
     // Submit
     bpf_ringbuf_submit(event, 0);

@@ -122,14 +122,14 @@ namespace Wintap.Tests
 
         [Fact]
         [Trait("Category", "wpc-02")]
-        public void EmitStop_IncrementsMissCounterAndUsesStopTimeFallback_WhenResolverReturnsNull()
+        public void EmitStop_IncrementsMissCounterAndUsesUnknownIdentity_WhenResolverReturnsNull()
         {
             var sensor = CreateSensor(out List<WintapMessage> emitted, (pid, time) => null);
             var stopTimestamp = new DateTime(2026, 8, 17, 15, 30, 0, DateTimeKind.Utc);
 
             WintapMessage message = sensor.EmitStop(6789, stopTimestamp, "fallback.exe", 9);
 
-            string expectedPidHash = TestPidHash(6789, stopTimestamp.ToFileTimeUtc());
+            string expectedPidHash = TestPidHash(-1, 0);
             Assert.Single(emitted);
             Assert.Equal(1, sensor.StopWithoutStartCount);
             Assert.Equal(expectedPidHash, message.PidHash);
