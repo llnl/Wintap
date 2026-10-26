@@ -359,6 +359,45 @@
         "resolved": "10.0.13",
         "contentHash": "DkNjtQyPR5Ud/zHnWHdsOuKbFRL9nIC92Q76z0NmHVDoQm40toLtsGFTIWq7toBoVa6fo/DInL3PLxY3Asixyw=="
       }
+    },
+    "net10.0/linux-x64": {
+      "DuckDB.NET.Bindings.Full": {
+        "type": "Transitive",
+        "resolved": "1.5.6.1",
+        "contentHash": "Lk/w0DHTr2MjhTFnSkO0+al6FpdZBfxXESDzULKuNVrIOI6r+nUaFE4rlOo0L+ZgBSTVd6qqHriGL7gu4OSJDA=="
+      },
+      "System.Diagnostics.EventLog": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "DkNjtQyPR5Ud/zHnWHdsOuKbFRL9nIC92Q76z0NmHVDoQm40toLtsGFTIWq7toBoVa6fo/DInL3PLxY3Asixyw=="
+      }
+    },
+    "net10.0/osx-arm64": {
+      "DuckDB.NET.Bindings.Full": {
+        "type": "Transitive",
+        "resolved": "1.5.6.1",
+        "contentHash": "Lk/w0DHTr2MjhTFnSkO0+al6FpdZBfxXESDzULKuNVrIOI6r+nUaFE4rlOo0L+ZgBSTVd6qqHriGL7gu4OSJDA=="
+      },
+      "System.Diagnostics.EventLog": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "DkNjtQyPR5Ud/zHnWHdsOuKbFRL9nIC92Q76z0NmHVDoQm40toLtsGFTIWq7toBoVa6fo/DInL3PLxY3Asixyw=="
+      }
+    },
+    "net10.0/win-x64": {
+      "DuckDB.NET.Bindings.Full": {
+        "type": "Transitive",
+        "resolved": "1.5.6.1",
+        "contentHash": "Lk/w0DHTr2MjhTFnSkO0+al6FpdZBfxXESDzULKuNVrIOI6r+nUaFE4rlOo0L+ZgBSTVd6qqHriGL7gu4OSJDA=="
+      },
+      "System.Diagnostics.EventLog": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "DkNjtQyPR5Ud/zHnWHdsOuKbFRL9nIC92Q76z0NmHVDoQm40toLtsGFTIWq7toBoVa6fo/DInL3PLxY3Asixyw=="
+      }
     }
   }
 }

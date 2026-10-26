@@ -27,6 +27,15 @@ to `net10.0`. Linux package builds enforce the exact SDK before cleanup/publish;
 see [`../Lintap/packaging/README.md`](../Lintap/packaging/README.md).
 Distribution-selected SDK patches are not substitutes for package qualification.
 
+The standalone MCP helper declares a shared lock graph for `win-x64`, `linux-x64`,
+`linux-arm64`, and the `osx-arm64` cross-build host. For a target-specific locked
+restore, use `dotnet restore shared/ai/wintap_mcp_server/wintap_mcp_server.csproj
+--locked-mode -p:RuntimeIdentifier=linux-x64` from the repository root (substitute
+the target as needed). `dotnet restore -r` overrides the project's plural
+`RuntimeIdentifiers` list and produces a different graph; use the singular MSBuild
+property to retain the declared list. The macOS entry covers SDK-host requirements
+for ReadyToRun cross-builds, not macOS collector acceptance.
+
 The current Windows release workflow uses `installer/Wintap.Installer.wixproj`.
 The two Visual Studio `.vdproj` files retained in `Wintap.sln` are legacy installer
 snapshots with stale payload paths; do not use them to package .NET 10. Windows
