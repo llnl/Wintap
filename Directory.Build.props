@@ -1,19 +1,52 @@
 <Project>
+  <!--
+    Repo-root Directory.Build.props. The original UseAppHost / NativeBuildRoot block is kept verbatim;
+    the "Supply chain" group is new (2026-10-22 plan).
+  -->
   <PropertyGroup>
-    <!--
-      Disable apphost when DISABLE_APPHOST environment variable is set to true.
-      This ensures inner `dotnet publish`/SDK tasks also respect the setting when
-      builds are invoked from Makefile or CI that export DISABLE_APPHOST.
-      Developers can override by setting the UseAppHost property explicitly.
-    -->
     <UseAppHost Condition="'$(UseAppHost)'=='' and '$(DISABLE_APPHOST)'=='true'">false</UseAppHost>
-    <!--
-      NativeBuildRoot keeps build outputs and intermediates off host-shared mounts.
-      NEsper/Roslyn runtime compilation on Fedora fails when app assemblies are loaded
-      from the shared mount, so each project gets an isolated native output subtree.
-    -->
     <NativeBuildRoot Condition="'$(NativeBuildRoot)' != ''">$([MSBuild]::EnsureTrailingSlash('$(NativeBuildRoot)'))</NativeBuildRoot>
     <BaseOutputPath Condition="'$(NativeBuildRoot)' != '' and '$(BaseOutputPath)' == ''">$(NativeBuildRoot)$(MSBuildProjectName)/bin/</BaseOutputPath>
     <BaseIntermediateOutputPath Condition="'$(NativeBuildRoot)' != '' and '$(BaseIntermediateOutputPath)' == ''">$(NativeBuildRoot)$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Supply chain">
+    <!-- Lock files: restore fails if a package's content hash differs from the committed lock -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+    <!-- NuGetAudit: any known vulnerability, any severity, direct or transitive, is a build ERROR -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1900;NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
+    <!-- No pre-release packages in anything that SHIPS. Projects opt in with <ShipsInAlpha>true</ShipsInAlpha>
+         (Wintap, WintapAPI). Deferred Workbench/MCP projects may still pin previews until their release. -->
+    <WarningsAsErrors Condition="'$(ShipsInAlpha)' == 'true'">$(WarningsAsErrors);NU5104</WarningsAsErrors>
+    <!-- 7.0 alpha = core telemetry only (Dave 2026-10-22). Flip to false for the Workbench/MCP release. -->
+    <WintapCore Condition="'$(WintapCore)' == ''">true</WintapCore>
+    <!-- Reproducible, attributable binaries -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <!-- VERSIONING (Dave, 2026-10-23). Three fields, three jobs:
+           AssemblyVersion      7.0.0.0 — frozen for the whole 7.0 line (binding identity; never churn).
+           InformationalVersion SemVer  — 7.0.0-alpha.1+<sha>; SourceLink appends the commit. Human truth.
+           FileVersion / MSI ProductVersion = 7.0.<build>  — WintapBuild is a monotonic counter: alpha1=1, alpha2=2,
+                                    RC=9x, GA=100, GA patches 101+. Every MSI out-ranks the last, so MajorUpgrade works.
+         Local builds are UNNUMBERED (WintapBuild=0 → 7.0.0.0, label "local"); real numbers come only from a release
+         tag or an explicit -p:WintapBuild=N -p:WintapPrerelease=alpha.1 on the command line. Nobody hand-bumps here. -->
+    <WintapLine>7.0</WintapLine>
+    <WintapBuild Condition="'$(WintapBuild)' == ''">0</WintapBuild>
+    <WintapPrerelease Condition="'$(WintapPrerelease)' == '' and '$(WintapBuild)' == '0'">local</WintapPrerelease>
+    <WintapVersion Condition="'$(WintapVersion)' == ''">$(WintapLine).$(WintapBuild)</WintapVersion>
+    <VersionPrefix>$(WintapLine).0</VersionPrefix>
+    <VersionSuffix>$(WintapPrerelease)</VersionSuffix>
+    <AssemblyVersion>7.0.0.0</AssemblyVersion>
+    <FileVersion>$(WintapVersion).0</FileVersion>
+    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
+    <Company>Lawrence Livermore National Laboratory</Company>
+    <Product>Wintap</Product>
+    <Copyright>Copyright 2026 Lawrence Livermore National Security, LLC</Copyright>
   </PropertyGroup>
 </Project>

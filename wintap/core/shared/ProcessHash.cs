@@ -6,7 +6,7 @@
 
 using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared;
-using Org.BouncyCastle.Crypto;
+using System.Security.Cryptography;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -66,12 +66,7 @@ namespace gov.llnl.wintap.core.shared.helpers
 
         private string GetHash(string preImage)
         {
-            byte[] buffer = Encoding.UTF8.GetBytes(preImage);
-            byte[] preImageBytes = Encoding.UTF8.GetBytes(preImage);
-            IDigest hash = new Org.BouncyCastle.Crypto.Digests.MD5Digest();
-            byte[] result = new byte[hash.GetDigestSize()];
-            hash.BlockUpdate(preImageBytes, 0, preImageBytes.Length);
-            hash.DoFinal(result, 0);
+            byte[] result = MD5.HashData(Encoding.UTF8.GetBytes(preImage));
             StringBuilder hashStr = new StringBuilder(9999);
             for (int i = 0; i < result.Length; i++)
             {

@@ -110,7 +110,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 hostFile = Path.Combine(hostDir.FullName, hostFile);
                 ParquetSchema schema = DetermineSchemaFromExpando(host.ToDynamic());
 
-                ParquetSerializerOptions options = new ParquetSerializerOptions();
+                ParquetOptions options = new ParquetOptions();
                 options.CompressionMethod = gov.llnl.wintap.core.etl.load.ParquetWriter.GetCompressionMethod();
                 List<ExpandoObject> data = new List<ExpandoObject>();
                 data.Add(host.ToDynamic());
@@ -118,7 +118,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 string pendingFile = hostFile + ".pending";
                 using (var fileStream = new FileStream(pendingFile, FileMode.Create, FileAccess.Write))
                 {
-                    await ParquetSerializer.SerializeAsync(schema, data, fileStream, options);
+                    await ParquetSerializer.SerializeUntypedAsync(data.Cast<IDictionary<string, object>>().ToList(), schema, fileStream, options);
                 }
                 File.Move(pendingFile, hostFile);
                 if (publish)
@@ -157,7 +157,7 @@ namespace gov.llnl.wintap.core.etl.extract
                 {
                     ParquetSchema schema = DetermineSchemaFromExpando(macIp.ToDynamic());
 
-                    ParquetSerializerOptions options = new ParquetSerializerOptions();
+                    ParquetOptions options = new ParquetOptions();
                     options.CompressionMethod = gov.llnl.wintap.core.etl.load.ParquetWriter.GetCompressionMethod();
                     List<ExpandoObject> data = new List<ExpandoObject>();
                     foreach (MacIpV4Record macIpV4Record in macIps)
@@ -167,7 +167,7 @@ namespace gov.llnl.wintap.core.etl.extract
 
                     using (var fileStream = new FileStream(macIpFile, FileMode.Create, FileAccess.Write))
                     {
-                        await ParquetSerializer.SerializeAsync(schema, data, fileStream, options);
+                        await ParquetSerializer.SerializeUntypedAsync(data.Cast<IDictionary<string, object>>().ToList(), schema, fileStream, options);
                     }
                 }
             }

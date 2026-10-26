@@ -260,11 +260,11 @@ namespace gov.llnl.wintap.core.etl.load
             try
             {
                 ParquetSchema schema = DetermineSchemaFromExpando(dataSet.Data.First());
-                ParquetSerializerOptions options = new ParquetSerializerOptions();
+                ParquetOptions options = new ParquetOptions();
                 options.CompressionMethod = GetCompressionMethod();
                 using (var fileStream = new FileStream(fileName, FileMode.Create, FileAccess.Write))
                 {
-                    await ParquetSerializer.SerializeAsync(schema, dataSet.Data, fileStream, options);
+                    await ParquetSerializer.SerializeUntypedAsync(dataSet.Data.Cast<IDictionary<string, object>>().ToList(), schema, fileStream, options);
                 }
             }
             catch (Exception ex)
@@ -279,11 +279,11 @@ namespace gov.llnl.wintap.core.etl.load
                     try
                     {
                         ParquetSchema schema = DetermineSchemaFromExpando(dataSet.Data.First());
-                        ParquetSerializerOptions options = new ParquetSerializerOptions();
+                        ParquetOptions options = new ParquetOptions();
                         options.CompressionMethod = GetCompressionMethod();
                         using (var fileStream = new FileStream(fileName, FileMode.Create, FileAccess.Write))
                         {
-                            await ParquetSerializer.SerializeAsync(schema, dataSet.Data, fileStream, options);
+                            await ParquetSerializer.SerializeUntypedAsync(dataSet.Data.Cast<IDictionary<string, object>>().ToList(), schema, fileStream, options);
                         }
                     }
                     catch (Exception ex2)

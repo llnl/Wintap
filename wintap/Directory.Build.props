@@ -1,4 +1,5 @@
 <Project>
+  <Import Project="..\Directory.Build.props" />
   <!-- This file is automatically imported by all .csproj files in this directory -->
   
   <!-- Platform-specific intermediate output paths must be set before Microsoft.Common.props uses them. -->
