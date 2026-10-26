@@ -60,6 +60,7 @@ namespace gov.llnl.wintap.core.etl.extract
         {
             ProcessStartData procWD = createProcessObject(wintapMessage.PID, wintapMessage.Process.ParentPID, wintapMessage.EventTime, wintapMessage.Process.Path, wintapMessage.Process.CommandLine, wintapMessage.Process.User, wintapMessage.Process.MD5, wintapMessage.Process.SHA2, wintapMessage.MessageType.ToString(), wintapMessage.Process.CommandLine, wintapMessage.PidHash, wintapMessage.Process.ParentPidHash, wintapMessage.ActivityType.ToString(), wintapMessage.AgentId);
             procWD.Hostname = host.Hostname;
+            ApplyStartProvenance(procWD, wintapMessage.Process.Arguments);
 
             try
             {
@@ -72,6 +73,18 @@ namespace gov.llnl.wintap.core.etl.extract
             {
                 WintapLogger.Log.Append("ERROR saving flattened START event:  " + ex.Message, LogLevel.Info);
             }
+        }
+
+        internal static void ApplyStartProvenance(ProcessStartData data, string arguments)
+        {
+            var sources = (arguments ?? "").Split((char[])null, StringSplitOptions.RemoveEmptyEntries)
+                .Where(token => token.StartsWith("PROC_START_SRC=", StringComparison.Ordinal))
+                .Select(token => token.Substring("PROC_START_SRC=".Length)).Distinct().ToArray();
+            // Conflicting or unknown breadcrumbs must not falsely classify a
+            // repeated Start. Persist only the bounded producer vocabulary.
+            data.ProcessStartSource = sources.Length == 1 &&
+                (sources[0] == "sched_fork" || sources[0] == "sched_exec" || sources[0] == "execve_or_execveat")
+                ? sources[0] : null;
         }
 
         private ProcessStartData createProcessObject(int pid, int parentPid, long eventTime, string path, string commandLine, string user, string md5, string sha2, string msgType, string cmdline, string pidHash, string parentPidHash, string activityType, string agentId)

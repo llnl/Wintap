@@ -91,6 +91,9 @@ internal class ProcessStartData : SensorData
 
     public string ActivityType { get; set; }
     public string CommandLine { get { return _commandLine; } }
+    // Producer lifecycle/image provenance, not a unique birth or success claim.
+    // Missing/unsupported source remains null; do not decorate CommandLine.
+    public string ProcessStartSource { get; internal set; }
     public string Hostname { get; set; }
 
     public string UniqueProcessKey
