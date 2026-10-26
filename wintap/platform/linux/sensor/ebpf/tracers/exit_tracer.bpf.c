@@ -2,6 +2,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+#include "task_start_boottime.h"
 
 #define TASK_COMM_LEN 16
 
@@ -82,9 +83,7 @@ int trace_process_exit(struct sched_exit_args *ctx)
 
     // Kernel stores wait status in task->exit_code.
     event->exit_code = BPF_CORE_READ(task, exit_code);
-    event->start_boot_ns = 0;
-    if (bpf_core_field_exists(task->start_boottime))
-        event->start_boot_ns = BPF_CORE_READ(task, start_boottime);
+    event->start_boot_ns = wintap_task_start_boottime_ns(task);
     event->start_monotonic_ns = BPF_CORE_READ(task, start_time);
     
     // Submit

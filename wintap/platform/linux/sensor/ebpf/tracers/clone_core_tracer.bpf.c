@@ -1,6 +1,7 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
+#include "task_start_boottime.h"
 
 // Retains clone_tracer.bpf.c's 48-byte prefix; extended birth evidence follows.
 // Classification does not depend on
@@ -36,9 +37,7 @@ int trace_process_fork(struct bpf_raw_tracepoint_args *ctx)
     BPF_CORE_READ_INTO(&event->parent_comm, parent, comm);
     event->child_pid = tgid;
     event->timestamp_ns = bpf_ktime_get_ns();
-    event->start_boot_ns = 0;
-    if (bpf_core_field_exists(child->start_boottime))
-        event->start_boot_ns = BPF_CORE_READ(child, start_boottime);
+    event->start_boot_ns = wintap_task_start_boottime_ns(child);
     event->clone_flags = 0; // Not needed: child pid/tgid is authoritative.
     bpf_ringbuf_submit(event, 0);
     return 0;
