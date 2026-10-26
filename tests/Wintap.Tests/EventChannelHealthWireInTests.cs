@@ -62,6 +62,33 @@ namespace Wintap.Tests
         }
 
         [Fact, Trait("Category", "shc-02")]
+        public void CollectorProcessRefreshReachesNormalEgressOnLinuxOnly()
+        {
+            WithMonitor((monitor, log) =>
+            {
+                var message = new WintapMessage(DateTime.UtcNow, StateManager.WintapPID, WintapMessage.MessageTypeEnum.Process)
+                {
+                    ActivityType = WintapMessage.ActivityTypeEnum.Refresh,
+                    PidHash = "collector-hash",
+                    ProcessName = "Lintap",
+                    Process = new WintapMessage.ProcessObject { PID = StateManager.WintapPID, Name = "Lintap", Path = "/usr/lib/lintap/Lintap" }
+                };
+                EventChannel.Send(message);
+                monitor.FlushNow();
+                if (OperatingSystem.IsLinux())
+                {
+                    Assert.Contains(log, entry => entry.Message.Contains("Process=1"));
+                    Assert.Equal(StateManager.AgentId.ToString(), message.AgentId);
+                    Assert.Equal(WintapMessage.ActivityTypeEnum.Refresh, message.ActivityType);
+                }
+                else
+                {
+                    Assert.Empty(log);
+                }
+            });
+        }
+
+        [Fact, Trait("Category", "shc-02")]
         public void DirectParquetPathInspectsExactlyOnce()
         {
             string previous = Environment.GetEnvironmentVariable("WINTAP_ENABLE_DIRECT_PARQUET");
@@ -166,14 +193,15 @@ namespace Wintap.Tests
             Directory.CreateDirectory(dataRoot);
             // Best-effort hygiene: tests remain valid if another test initialized Env first.
             Env.SetDataRoot(dataRoot);
-            WintapLogger.Log.Init();
-            _ = EventChannel.TotalEvents;
-            _ = DirectParquetSink.IsEnabled;
             foreach (string name in EnvironmentNames)
             {
                 originalValues[name] = Environment.GetEnvironmentVariable(name);
                 Environment.SetEnvironmentVariable(name, "1");
             }
+            // These routing flags are static: set isolation before first channel access.
+            WintapLogger.Log.Init();
+            _ = EventChannel.TotalEvents;
+            _ = DirectParquetSink.IsEnabled;
         }
 
         public void Dispose()

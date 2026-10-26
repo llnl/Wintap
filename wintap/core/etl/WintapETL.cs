@@ -19,6 +19,10 @@ using gov.llnl.wintap.core.etl.load;
 using System.Diagnostics.Tracing;
 using System.IO;
 using System.Xml.Serialization;
+using System.Threading.Tasks;
+using System.Threading;
+using Timer = System.Timers.Timer;
+using EventChannel = gov.llnl.wintap.core.infrastructure.EventChannel;
 using gov.llnl.wintap.core.etl.load.interfaces;
 using gov.llnl.wintap.core.etl.model;
 using Newtonsoft.Json;
@@ -46,6 +50,8 @@ namespace gov.llnl.wintap.core.etl
         private readonly string esperNameSpacePrefix = "gov.llnl.wintap.core.etl.esper.";
         private long totalMessageCount;
         ETLConfig etlConfig;
+        private readonly TaskCompletionSource<bool> readiness = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task<bool> Ready => readiness.Task;
 
         #endregion
 
@@ -79,6 +85,7 @@ namespace gov.llnl.wintap.core.etl
             }
             catch (Exception ex)
             {
+                readiness.TrySetResult(false);
                 WintapLogger.Log.Append("Could not start ETL!!!: " + ex.Message, LogLevel.Info);
             }
 
@@ -113,31 +120,79 @@ namespace gov.llnl.wintap.core.etl
             return complete;
         }
 
+        internal async Task<bool> ShutdownWithBarrierAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await EtlStartupReadiness.RequireAsync(Ready, TimeSpan.FromSeconds(30), cancellationToken);
+                var clock = EventChannel.EsperRuntime.EventService;
+                AttributionTrace.RecordBoundary("esper-shutdown-clock-freeze-begin", "etl");
+                await EtlShutdownBarrier.FinishWindowsAsync(() => {
+                    clock.ClockExternal();
+                    AttributionTrace.RecordBoundary("esper-shutdown-clock-frozen", "etl", depth: clock.CurrentTime);
+                }, () => clock.CurrentTime, target => {
+                    AttributionTrace.RecordBoundary("esper-shutdown-window-advance-begin", "etl", depth: target);
+                    clock.AdvanceTimeSpan(target);
+                    AttributionTrace.RecordBoundary("esper-shutdown-window-advance-end", "etl", depth: clock.CurrentTime);
+                }, TimeSpan.FromSeconds(30), cancellationToken);
+
+                // Cut off all subscriptions before draining any serializer. Join
+                // callbacks already executing; do not merely check a queue depth.
+                await Task.Run(async () => {
+                    Task[] joins = sensors.Select(sensor => sensor.CloseCallbacks()).ToArray();
+                    await Task.WhenAll(joins);
+                }).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+                foreach (Serializer sensor in sensors) sensor.TraceCallbacksJoined();
+                AttributionTrace.RecordBoundary("esper-shutdown-callbacks-quiesced", "etl",
+                    complete: true);
+                return Shutdown();
+            }
+            catch (Exception ex)
+            {
+                AttributionTrace.RecordBoundary("esper-shutdown-barrier-failed", "etl", complete: false);
+                WintapLogger.Log.Append("Experimental ETL shutdown barrier failed; live callbacks not declared drained: " + ex, LogLevel.Error);
+                return false;
+            }
+        }
+
         #endregion
 
         #region private methods and event hanlders
 
         private void ProcessObjectModelWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
-            WintapLogger.Log.Append("Creating sensors", LogLevel.Info);
-            defaultSensor = new DefaultSerializer(esperNameSpacePrefix + "default.epl");
-            fileSensor = new FileSerializer(esperNameSpacePrefix + "file.epl");
-            fcSensor = new FocusChangeSerializer(esperNameSpacePrefix + "focuschange.epl");
-            regSensor = new RegistrySerializer(esperNameSpacePrefix + "registry.epl");
-            selinuxSensor = new SELinuxSerializer(esperNameSpacePrefix + "selinux.epl");
-            tcpSensor = new TcpConnectionSerializer(new string[] { esperNameSpacePrefix + "tcp.epl" });
-            udpSensor = new UdpPacketSerializer(new string[] { esperNameSpacePrefix + "udp.epl" });
-            sensors = new List<Serializer>();
-            sensors.Add(defaultSensor);
-            sensors.Add(processSensor);
-            sensors.Add(processStopSensor);
-            sensors.Add(fileSensor);
-            sensors.Add(tcpSensor);
-            sensors.Add(udpSensor);
-            sensors.Add(regSensor);
-            sensors.Add(fcSensor);
-            sensors.Add(selinuxSensor);
-            WintapLogger.Log.Append("All sensors created.  Serializer serialization interval (msec): " + etlConfig.SerializationIntervalSec, LogLevel.Info);
+            try
+            {
+                if (e.Error != null) throw new InvalidOperationException("Process serializer initialization failed", e.Error);
+                WintapLogger.Log.Append("Creating sensors", LogLevel.Info);
+                defaultSensor = new DefaultSerializer(esperNameSpacePrefix + "default.epl");
+                fileSensor = new FileSerializer(esperNameSpacePrefix + "file.epl");
+                fcSensor = new FocusChangeSerializer(esperNameSpacePrefix + "focuschange.epl");
+                regSensor = new RegistrySerializer(esperNameSpacePrefix + "registry.epl");
+                selinuxSensor = new SELinuxSerializer(esperNameSpacePrefix + "selinux.epl");
+                tcpSensor = new TcpConnectionSerializer(new string[] { esperNameSpacePrefix + "tcp.epl" });
+                udpSensor = new UdpPacketSerializer(new string[] { esperNameSpacePrefix + "udp.epl" });
+                sensors = new List<Serializer>();
+                sensors.Add(defaultSensor);
+                sensors.Add(processSensor);
+                sensors.Add(processStopSensor);
+                sensors.Add(fileSensor);
+                sensors.Add(tcpSensor);
+                sensors.Add(udpSensor);
+                sensors.Add(regSensor);
+                sensors.Add(fcSensor);
+                sensors.Add(selinuxSensor);
+                WintapLogger.Log.Append("All sensors created.  Serializer serialization interval (msec): " + etlConfig.SerializationIntervalSec, LogLevel.Info);
+                bool ready = sensors.All(sensor => sensor != null && sensor.QueryRegistrationSucceeded);
+                AttributionTrace.RecordQuery(ready ? "etl-callbacks-ready" : "etl-readiness-failed", "etl", null, null);
+                readiness.TrySetResult(ready);
+            }
+            catch (Exception ex)
+            {
+                readiness.TrySetResult(false);
+                AttributionTrace.RecordQuery("etl-readiness-failed", "etl", null, null, error: ex.ToString());
+                WintapLogger.Log.Append("ETL serializer initialization failed: " + ex, LogLevel.Error);
+            }
         }
 
         private void ProcessObjectModelWorker_DoWork(object sender, DoWorkEventArgs e)

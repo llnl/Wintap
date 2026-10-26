@@ -10,7 +10,7 @@ internal static class Program
         try
         {
             var lintapDll = GetArg(args, "--lintap-dll")
-                ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "wintap", "bin", "Release", "net8.0", "Lintap.dll"));
+                ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "wintap", "bin", "Release", "net10.0", "Lintap.dll"));
 
             var dataRoot = GetArg(args, "--data-root")
                 ?? Path.Combine(Path.GetTempPath(), "lintap-smoke-" + Guid.NewGuid().ToString("N"));

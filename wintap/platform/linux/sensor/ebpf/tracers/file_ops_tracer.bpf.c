@@ -81,7 +81,7 @@ struct file_path_event {
     __u32 fd;              // File descriptor
     __u32 bytes;           // Bytes read/written (for read/write)
     __u32 op_type;         // Which operation (open/read/write/etc)
-    __s32 dirfd;           // Open-time dirfd for resolving relative/openat paths
+    __s32 dirfd;           // Operation-time dirfd for relative open/unlink paths
     __u64 file_ino;        // Opened object's inode (0 when unavailable)
     __u64 dir_ino;         // dirfd base inode for relative opens (0 when unavailable)
     __u32 file_dev;        // Opened object's superblock s_dev (0 when unavailable)
@@ -468,6 +468,32 @@ static __always_inline void emit_file_event_user(__u32 pid, const char *filename
     event->mnt_ns = 0;
     event->_pad0 = 0;
 
+    // Unlink has no surviving file fd. Preserve the base at syscall entry,
+    // before a worker closes/reuses its dirfd, changes cwd, or exits. Userspace
+    // resolves learned directory identities, never a late PID/fd guess.
+    // This remains unlink intent, not proof of successful syscall completion.
+    if (op_type == FILE_OP_UNLINK && event->filename[0] != '/') {
+        event->mnt_ns = current_mnt_ns();
+        umode_t mode = 0;
+        __u32 dev = 0;
+        __u64 ino = 0;
+        if (dirfd >= 0) {
+            read_fd_inode_info((__u32)dirfd, &mode, &dev, &ino);
+        } else if (dirfd == AT_FDCWD) {
+            struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
+            struct inode *inode = BPF_CORE_READ(task, fs, pwd.dentry, d_inode);
+            if (inode) {
+                mode = BPF_CORE_READ(inode, i_mode);
+                ino = BPF_CORE_READ(inode, i_ino);
+                dev = BPF_CORE_READ(inode, i_sb, s_dev);
+            }
+        }
+        if ((mode & S_IFMT) == S_IFDIR) {
+            event->dir_dev = dev;
+            event->dir_ino = ino;
+        }
+    }
+
     submit_file_event(event);
     increment_stat(emitted_key_for_op(op_type));
 }
@@ -783,7 +809,7 @@ int t_unlinkat(struct unlinkat_args *ctx)
     if (should_drop_user_pseudo_path(ctx->pathname, FILE_OP_UNLINK))
         return 0;
     
-    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, 0);
+    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, ctx->dfd);
     return 0;
 }
 
@@ -805,7 +831,7 @@ int t_unlink(struct unlink_args *ctx)
     if (should_drop_user_pseudo_path(ctx->pathname, FILE_OP_UNLINK))
         return 0;
 
-    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, 0);
+    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, AT_FDCWD);
     return 0;
 }
 

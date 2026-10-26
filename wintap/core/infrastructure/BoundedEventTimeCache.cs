@@ -175,6 +175,22 @@ namespace gov.llnl.wintap.core.infrastructure
             }
         }
 
+        internal void Remove(int key, string identity)
+        {
+            lock (gate)
+            {
+                if (!entriesByKey.TryGetValue(key, out var candidates)) return;
+                for (int i = candidates.Count - 1; i >= 0; i--)
+                {
+                    var node = candidates[i];
+                    if (!string.Equals(node.Value.Identity, identity, StringComparison.Ordinal)) continue;
+                    lru.Remove(node);
+                    candidates.RemoveAt(i);
+                }
+                if (candidates.Count == 0) entriesByKey.Remove(key);
+            }
+        }
+
         private void EvictOldest()
         {
             LinkedListNode<Entry>? oldest = lru.First;

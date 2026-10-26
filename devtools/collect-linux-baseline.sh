@@ -71,7 +71,7 @@ run_cmd "dotnet-runtimes" bash -lc 'dotnet --list-runtimes 2>&1 || true'
 run_cmd "dotnet-environment" bash -lc 'env | sort | grep -E "^(DOTNET|CORECLR|COMPlus|NUGET|MSBuild|ASPNETCORE)_" || true'
 
 run_cmd "dpkg-dotnet-libbpf-duckdb" bash -lc 'dpkg-query -W -f="${Package}\t${Version}\t${Architecture}\n" "dotnet*" "aspnetcore*" "libbpf*" "bpftool" "clang*" "llvm*" "libduckdb*" "duckdb*" "libc6" 2>/dev/null | sort || true'
-run_cmd "apt-policy-dotnet" bash -lc 'apt-cache policy dotnet-sdk-8.0 dotnet-runtime-8.0 aspnetcore-runtime-8.0 2>/dev/null || true'
+run_cmd "apt-policy-dotnet" bash -lc 'apt-cache policy dotnet-sdk-10.0 dotnet-runtime-10.0 aspnetcore-runtime-10.0 2>/dev/null || true'
 run_cmd "native-tool-versions" bash -lc 'clang --version 2>/dev/null || true; llvm-objdump --version 2>/dev/null | sed -n "1,3p" || true; bpftool version 2>/dev/null || true; duckdb --version 2>/dev/null || true; ldd --version 2>/dev/null | sed -n "1p" || true'
 
 if [ -f "wintap/Makefile" ] && [ -f "wintap/Lintap.csproj" ]; then

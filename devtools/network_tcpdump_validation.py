@@ -392,7 +392,7 @@ def main() -> int:
     parser.add_argument(
         "--lintap-dll",
         type=Path,
-        default=Path("/tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll"),
+        default=Path("/tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll"),
         help="Path to Lintap.dll when using --start-lintap",
     )
     parser.add_argument(

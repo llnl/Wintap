@@ -8,7 +8,6 @@ using com.espertech.esper.client;
 using com.espertech.esper.common.client;
 using gov.llnl.wintap.core.etl.extract;
 using gov.llnl.wintap.core.etl.models;
-using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.etl.shared;
 using System;
 using System.Collections.Generic;
@@ -23,10 +22,15 @@ namespace gov.llnl.wintap.core.etl.transform
 
         internal static ProcessConnIncrData CreateProcessConn(EventBean newEvent, string _pidhash, List<NIC> activeNics)
         {
-            List<string> inboundActivities = new List<string>() { "TcpIp/Accept", "TcpIp/Recv", "TcpIp/TCPCopy", "UdpIp/Recv" };
+            return CreateProcessConn(newEvent, _pidhash, activeNics, HostSerializer.Instance.HostId.Hostname);
+        }
+
+        internal static ProcessConnIncrData CreateProcessConn(EventBean newEvent, string _pidhash, List<NIC> activeNics, string hostname)
+        {
+            bool inbound = NetworkActivity.IsInbound(newEvent["activityType"].ToString());
             LoHi5Tuple loHi = createLoHi5TupleFrom(newEvent);
-            string loGW = derivePrivateGateway(loHi.LoIPV4LongVal, HostSerializer.Instance.HostId.Hostname, activeNics);
-            string hiGW = derivePrivateGateway(loHi.HiIPV4LongVal, HostSerializer.Instance.HostId.Hostname, activeNics);
+            string loGW = derivePrivateGateway(loHi.LoIPV4LongVal, hostname, activeNics);
+            string hiGW = derivePrivateGateway(loHi.HiIPV4LongVal, hostname, activeNics);
             IpV4Addr loIp = createIpAddr(loHi.LoAddrStr, (uint)loHi.LoIPV4LongVal, loGW);
             IpV4Addr hiIp = createIpAddr(loHi.HiAddrStr, (uint)loHi.HiIPV4LongVal, hiGW);
             IdGenerator idgen = new IdGenerator();
@@ -38,7 +42,9 @@ namespace gov.llnl.wintap.core.etl.transform
 
             pci.PID = Convert.ToInt32(newEvent["PID"].ToString());
             pci.PidHash = _pidhash;
-            if (inboundActivities.Contains(newEvent["activityType"].ToString()))
+            pci.SourcePort = Convert.ToInt32(newEvent["srcPort"]);
+            pci.DestinationPort = Convert.ToInt32(newEvent["destPort"]);
+            if (inbound)
             {
                 pci.LocalIpAddr = Converters.ConvertIpToLong(newEvent["destIp"].ToString());  //destIpAddr
                 pci.LocalPort = Convert.ToInt32(newEvent["destPort"]); // destPort

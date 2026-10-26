@@ -2,6 +2,58 @@
 
 This directory contains small utilities for validating and troubleshooting Wintap, Mactap, and Lintap deployments.
 
+## Corrected telemetry bundle: Ubuntu and later RHEL 9
+
+`verify_rpm_payload.py --rpm PATH --rpm-sha256 TRUSTED_SHA256` is a read-only native
+RHEL9/x86_64 post-install check. It compares installed regular non-config payload
+files to an independently reviewed RPM and emits core-object/managed hashes. It
+never installs, controls services, reads config contents or attaches tracers. Native
+build provenance (SDK10.0.402, managed and all eBPF objects) remains required.
+Use Analytics `validation/telemetry-soak/validate-round.py` after normal evidence
+delivery for receipt/hash/projection checks and shared dashboard evaluation.
+Procedure: `../Wintap-Analytics/wiki/work/wintap-telemetry-identity-and-data-quality/rhel9_validation.md`.
+
+The idle-VM-only `network_trace_smoke_test.py --turnover` uses24 rapid socket
+lifetimes, failures before success, and connected repeats within the sampling
+interval. It keeps48 strict expected observations; it does not guarantee pointer
+reuse. Default mode retains the15-check return matrix. The observer uses monotonic
+timing plus an outer GNU timeout including attachment/cleanup. This observer is
+not a recurring/field canary. Named file stimuli now include coexisting case-only
+names and learned-cwd unlink, with exact per-path activities.
+
+`network_trace_smoke_test.py --tcp-lifecycle` adds10 strict observations spanning
+bidirectional data, half-close, immediate sampled EOF, delayed EOF requests and
+both connected-socket closes. Delayed EOF still requests one byte but returns zero;
+TCP telemetry retains requested-at-entry byte semantics. The listener's peerless
+close is a separate explicit expectation. Extra partial/duplicate Send/Recv/Close
+rows fail. New-object runs also require empty conn_map/sock_pid_map after closure.
+The managed receipt advertises `tcpTupleContractVersion: 1` only for a core object
+with the `tcp_tuple_v1` map marker; trusted object hashes and attached lifecycle
+hooks remain required. This is separate from UDP's `networkContractVersion: 2`.
+
+## Experimental short-lived attribution A/B rounds
+
+`attribution_experiment.py` copies the installed package and a candidate build into
+private roots and exercises manifest-recorded fork/file/exit cohorts. It never
+installs or restarts the service. Requires native Linux/root and space for copied
+binaries. Default: six rounds (old/candidate normal and missing-birth capture, then
+candidate doubled-burst/restart). `--rounds` selects a subset; `--settle-seconds`
+controls post-workload settling, not shutdown correctness. `fixed-legacy-exit`
+substitutes a no-start exit object **only in a private copy**. Evidence is not overwritten.
+`--experiment-batch-drain` enables an experimental 11s Esper-window wait **after
+producer shutdown**; default runtime shutdown behavior remains unchanged. This
+isolates final-batch loss from upstream drops, not a release-ready general drain API.
+For a same-binary comparison, select `--rounds fixed-missing-birth,fixed-batch-drain`
+without the global flag: only the latter enables the barrier. `--shutdown-timeout`
+sets the observation deadline; forced termination is always recorded as a failed gate.
+
+Candidate `WINTAP_EXPERIMENT_LIFECYCLE_SHADOW_PATH` enables bounded exit-only JSONL:
+experimental ≤1s lifetime rule, weak role labels, numeric UID and clock/start evidence.
+No benign verdicts, early role timeline, suppression, raw-schema change or deployment
+approval is implied. Compare canonical inputs, unresolved rows, actual birth coverage
+and conserved events—not just fewer orphan hashes. Evidence/analysis:
+`../Wintap-Analytics/wiki/work/host-process-identity-patch/experiment_results.md`.
+
 ## Portable smoke run manifests and results dashboard
 
 The named workload, process/file/network capture tests, clone trace/pipeline/package
@@ -38,6 +90,42 @@ do not themselves carry the smoke UUID. Run repeated tests sequentially to avoid
 ambiguous overlaps. No legacy inference. See that app's README for VM→Mac examples.
 
 ## Named cross-domain stimulus (Linux, field-friendly Python)
+
+UDP now uses independent unconnected and connected client/server workers/sockets,
+with separate manifest cases, rather than allowing a connected Receive to satisfy
+both phases. Existing canary limits remain stimulus-only; no collector is started.
+
+## Actual-object network qualification (dev-time only)
+
+On a designated idle Linux VM, build a reviewed CO-RE object and the observer:
+
+```bash
+make -C wintap/platform/linux/sensor/ebpf/tracers network_ops_tracer.bpf.o
+cc -Wall -Wextra -Werror -O2 devtools/network_trace_runner.c -o /path/outside/git/network-trace-runner -lbpf -lelf -lz
+python3 devtools/network_trace_smoke_test.py --runner /path/outside/git/network-trace-runner \
+  --object wintap/platform/linux/sensor/ebpf/tracers/network_ops_tracer.bpf.o \
+  --output /path/outside/git/fresh-network-qualification
+```
+
+This **attaches tracers**, so it is not a recurring canary and must not run on
+active collection hosts. Noninteractive sudo must already be authorized; the
+harness never changes sudo/security policies or collector services. It scopes the
+object to the workload PID, requires operation hooks/readiness, checks TCP Accept
+and UDP send/receive modes, zero-length/truncated datagrams, nonblocking/oversize
+negatives, duplicate rows and emptied context maps, then detaches within 20 seconds.
+The observer accepts at most 120 seconds. Evidence stays in the fresh VM-local output;
+use `--baseline` only for strict comparison of an older object lacking the new
+UDP-send return hook/map (it does not waive failed observation checks).
+
+Passing this proves actual-object scope, **not** managed identity, normal ETL,
+installed-package behavior, exact packet/byte conservation or release readiness.
+Current core UDP bytes mean successful **protocol-function return**, not final
+syscall success or requested length. TCP remains requested-entry/sampled. Per-socket
+one-second send/connected-receive sampling stays enabled; peer-buffer UDP receives
+remain unsampled. Wildcard non-loopback local addresses and socket-pointer reuse
+need separate qualification; incomplete raw observations are not retroactively fixed.
+
+### Field-friendly workload
 
 With the collector **already running**, generate a tiny identifiable dataset:
 
@@ -149,7 +237,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/network_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -209,7 +297,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/process_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -242,6 +330,39 @@ local=192.168.252.9:37804 -> remote=104.20.23.154:80 proto=TCP rows=2
 
 ## File Activity Smoke Test
 
+### TCP endpoint normalization smoke
+
+Normal-ETL `network_capture_smoke_test.py` now includes host-relative endpoint
+confirmation by default. `--no-verify-endpoints` opts out explicitly; direct-mode
+`--start-lintap` defaults to no normalization check (its schema is not normalized).
+The dashboard keeps explicit opt-outs yellow rather than implying full confirmation.
+
+To run only the endpoint cases, without Internet HTTP/DNS stimulus:
+
+```bash
+uv run --no-project --with duckdb python devtools/network_endpoint_smoke_test.py \
+  --data-root /var/log/lintap/data --host-ip 192.168.252.47 --timeout 120
+```
+
+Omit `--host-ip` to choose the host's routed IPv4 interface. This must be an assigned
+non-loopback address; private LAN addresses are fine. Do not use an external NAT
+address that the host cannot bind. Both client and server connect via that address.
+
+Cases: separate client/server PIDs, and one PID owning both socket ends. Require
+Send **and** Recv at each end, stable process identity (distinct hashes for separate
+processes), correct Local/Remote **IP-and-port pairs**, and preserved directed
+SourcePort/DestinationPort. Same-IP/same-PID validation uses the directed ports to
+avoid accepting receive rows accidentally swapped between socket roles. The new
+provenance fields require a rebuilt sensor; old parquet cannot satisfy this gate.
+TCP Accept coverage, receive-byte accuracy, IPv6 collection, and packet-level
+completeness are separate gates, not silently certified here.
+
+The decorated standalone test publishes `network-endpoints` manifests/parquet to
+the SmokeTests dashboard. The normal network smoke combines these selectors with
+its outbound checks. An incomplete/unsupported capture fails the harness rather
+than turning successful workload generation into a capture PASS.
+
+
 `file_capture_smoke_test.py` is an integration smoke test for Linux file activity capture correctness. It generates a small amount of local file activity (create/write/read/delete), waits for parquet output, then queries the parquet files with DuckDB to confirm file-path rows were collected.
 
 Usage:
@@ -258,7 +379,7 @@ Optional: start Lintap in direct-parquet mode for this test (requires root):
 ```bash
  sudo uv run python devtools/file_capture_smoke_test.py \
     --start-lintap \
-    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll \
+    --lintap-dll /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll \
     --timeout 240 \
     --poll-interval 10
 ```
@@ -281,7 +402,7 @@ cat > /tmp/etlconfig-soak.json <<EOF
   "SerializationIntervalSec": 10
 }
 EOF
-sudo env WINTAP_CONFIG_PATH=/tmp/etlconfig-soak.json dotnet /tmp/lintap-build/wintap/bin/Debug/net8.0/Lintap.dll
+sudo env WINTAP_CONFIG_PATH=/tmp/etlconfig-soak.json dotnet /tmp/lintap-build/wintap/bin/Debug/net10.0/Lintap.dll
 ```
 
 In another shell, run 5 rounds (every ~6 minutes):

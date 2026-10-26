@@ -20,7 +20,9 @@ namespace gov.llnl.wintap.core.etl.extract
     internal class FileSerializer : Serializer
     {
 
-        internal static string SelectPath(string path, bool windows) => windows ? path : path.ToLower();
+        // Producer owns platform normalization. Linux/macOS paths can differ
+        // only by case; do not collapse them during projection or file-keying.
+        internal static string SelectPath(string path, bool windows) => path;
 
         internal FileSerializer(string query) : base(query)
         {

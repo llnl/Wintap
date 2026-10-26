@@ -44,7 +44,14 @@ namespace gov.llnl.wintap.core.shared
             MachineBootTime = getBootTime();
 
             WintapLogger.Log.Append($"StateManager is getting AgentId", LogLevel.Info);
-            AgentId = getAgentId(readState());
+            string runtimeRoot = Environment.GetEnvironmentVariable("WINTAP_RUNTIME_ROOT");
+            if (string.IsNullOrWhiteSpace(runtimeRoot))
+                runtimeRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Wintap", "runtime");
+            var identity = AgentIdentity.LoadOrCreate(
+                Path.Combine(runtimeRoot, "wintapstate.json"), Environment.MachineName, AgentIdentity.ReadMachineId(),
+                Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
+            AgentId = identity.AgentId;
+            WintapLogger.Log.Append($"Agent identity: {identity.Reason}; AgentId={AgentId}", LogLevel.Info);
             WintapLogger.Log.Append($"StateManager is initialized.", LogLevel.Info);
         }
 
@@ -77,24 +84,6 @@ namespace gov.llnl.wintap.core.shared
             }
         }
 
-        private Guid getAgentId(WintapState state)
-        {
-            Guid agentId = new Guid();
-            try
-            {
-                agentId = Guid.Parse(state.AgentId);
-            }
-            catch (Exception ex) { }
-
-            if (agentId == new Guid())
-            {
-                WintapLogger.Log.Append("Generating new Agent Id for this sensor.", LogLevel.Info);
-                agentId = Guid.NewGuid();
-                state.AgentId = agentId.ToString();
-            }
-            return agentId;
-        }
-
         public static StateManager State
         {
             get
@@ -103,19 +92,6 @@ namespace gov.llnl.wintap.core.shared
             }
         }
 
-        private WintapState readState()
-        {
-            FileInfo stateInfo = new FileInfo(Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
-            WintapState wintapState = new WintapState();
-            if (stateInfo.Exists)
-            {
-                string readJsonString = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "wintapstate.json"));
-                WintapState deserializedState = JsonConvert.DeserializeObject<WintapState>(readJsonString);
-                wintapState = deserializedState;
-            }
-
-            return wintapState;
-        }
     }
 
     public class DiskVolume

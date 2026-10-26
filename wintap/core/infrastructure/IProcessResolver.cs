@@ -33,6 +33,14 @@ namespace gov.llnl.wintap.core.infrastructure
         /// </summary>
         bool TryResolveCurrentProcessAtTime(int pid, DateTime eventTime, out ProcessRecord process);
 
+        // Optional experimental Linux recovery. Other resolvers remain unsupported.
+        bool RetainExitIdentityEvidence(WintapMessage stop, DateTime kernelStartUtc) => false;
+        bool TryResolveExitIdentityEvidence(int pid, DateTime eventTime, out ProcessRecord evidence)
+        {
+            evidence = null;
+            return false;
+        }
+
         // Narrow fallback for Windows BAM writes emitted immediately after ProcessStop.
         ProcessRecord ResolveRegistryTeardownProcess(int pid, DateTime eventTime);
 

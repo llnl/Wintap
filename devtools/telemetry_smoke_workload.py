@@ -106,6 +106,39 @@ def files(root, case):
     finally:
         os.close(dirfd)
 
+    # Coexisting case-only names exercise the real serializer/key projection.
+    # Each receives independent exact-path assertions in the manifest.
+    for name in ('CaseOnly.bin', 'caseonly.bin'):
+        exact = directory / name
+        fd = os.open(exact, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        try:
+            assert os.write(fd, b'case-pair') == 9
+            os.lseek(fd, 0, os.SEEK_SET)
+            assert os.read(fd, 9) == b'case-pair'
+        finally:
+            os.close(fd)
+        emit(root, case, 'case-only-open-write-read-close', path=str(exact),
+             expectedActivities=['Open', 'Write', 'Read', 'Close'])
+    for name in ('CaseOnly.bin', 'caseonly.bin'):
+        exact = directory / name
+        exact.unlink()
+        emit(root, case, 'case-only-unlink', path=str(exact), expectedActivity='Delete')
+
+    # Learned cwd identity survives a subsequent cwd change/worker exit. This
+    # worker is isolated; no collector or parent process directory is changed.
+    old_cwd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+    base = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fchdir(base)
+        fd = os.open('cwd.bin', os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        os.close(fd)
+        os.unlink('cwd.bin')
+        emit(root, case, 'cwd-unlink', path=str(directory / 'cwd.bin'), expectedActivity='Delete')
+    finally:
+        os.fchdir(old_cwd)
+        os.close(base)
+        os.close(old_cwd)
+
 
 def receive_exact(sock, expected):
     received = b""
@@ -142,12 +175,13 @@ def network(root, case, port, ipv6):
                 emit(root, case, "receive/send/disconnect", peer=list(peer),
                      expectedActivities=["TcpIpRecv", "TcpIpSend", "TcpIpDisconnect"])
             else:
-                for _ in range(2):
-                    data, peer = sock.recvfrom(4096)
-                    assert data == b"smoke-request"
-                    sock.sendto(b"smoke-response", peer)
-                    emit(root, case, "receive/send", local=list(sock.getsockname()), peer=list(peer),
-                         expectedActivities=["UdpIpRecv", "UdpIpSend"])
+                # Each mode has a distinct worker/socket/selector. Connected
+                # Receive must not satisfy the unconnected case (or vice versa).
+                data, peer = sock.recvfrom(4096)
+                assert data == b"smoke-request"
+                sock.sendto(b"smoke-response", peer)
+                emit(root, case, "receive/send", local=list(sock.getsockname()), peer=list(peer),
+                     expectedActivities=["UdpIpRecv", "UdpIpSend"])
         elif tcp:
             sock.connect((address, port))
             emit(root, case, "connect", local=list(sock.getsockname()), peer=list(sock.getpeername()), expectedActivity="TcpIpConnect")
@@ -157,19 +191,28 @@ def network(root, case, port, ipv6):
             assert sock.recv(1) == b""
             emit(root, case, "send/receive/disconnect", expectedActivities=["TcpIpSend", "TcpIpRecv", "TcpIpDisconnect"])
         else:
-            sock.sendto(b"smoke-request", (address, port))
-            assert sock.recvfrom(4096)[0] == b"smoke-response"
-            emit(root, case, "unconnected-sendto/recvfrom", local=list(sock.getsockname()), peer=[address, port],
-                 expectedActivities=["UdpIpSend", "UdpIpRecv"])
-            sock.connect((address, port))
-            sock.send(b"smoke-request")
-            assert sock.recv(4096) == b"smoke-response"
-            emit(root, case, "connected-send/recv", local=list(sock.getsockname()), peer=[address, port],
+            connected = "cn" in case
+            if connected:
+                sock.connect((address, port))
+                sock.send(b"smoke-request")
+                assert sock.recv(4096) == b"smoke-response"
+            else:
+                sock.sendto(b"smoke-request", (address, port))
+                assert sock.recvfrom(4096)[0] == b"smoke-response"
+            emit(root, case, "connected-send/recv" if connected else "unconnected-sendto/recvfrom",
+                 local=list(sock.getsockname()), peer=[address, port],
                  expectedActivities=["UdpIpSend", "UdpIpRecv"])
 
 
-def network_pair(root, protocol, ipv6=False):
+def network_pair(root, protocol, ipv6=False, connected=None):
+    if protocol == 'udp' and connected is None:
+        network_pair(root, protocol, ipv6, connected=False)
+        time.sleep(1.1)  # Respect existing per-socket sampling/pointer reuse.
+        network_pair(root, protocol, ipv6, connected=True)
+        return
     base = f"wt_{protocol}{'6' if ipv6 else '4'}"
+    if connected:
+        base += 'cn'
     server = subprocess.Popen(worker_command(root, base + "srv"), stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True)
     try:
@@ -309,9 +352,26 @@ def main():
                               threadIds=[e["tid"] for e in events if e.get("expectedProcessStart") is False],
                               startedAtUtc=report["startedAtUtc"], completedAtUtc=report["completedAtUtc"],
                               expectedActivities=activities, paths=[e["path"] for e in events if "path" in e])
+        if domain == 'file':
+            by_path = {}
+            for event in events:
+                if 'path' not in event:
+                    continue
+                required = [event['expectedActivity']] if event.get('expectedActivity') else event.get('expectedActivities', [])
+                by_path.setdefault(event['path'], set()).update(required)
+            selector['pathExpectations'] = [dict(path=path, expectedActivities=sorted(required))
+                for path, required in sorted(by_path.items()) if required]
         if domain == "network":
             selector["ports"] = sorted({endpoint[1] for e in events for endpoint in (e.get("local"), e.get("peer")) if endpoint})
             selector["expectedProtocols"] = ["tcp" if "tcp" in case else "udp"]
+            # The exact tuple contract is IPv4 here; IPv6 stimulus/skips retain
+            # their prior separate scope rather than inheriting IPv4 acceptance.
+            unique = {(e['pid'], tuple(e['local']), tuple(e['peer'])) for e in events
+                if e.get('local') and e.get('peer') and e['local'][0] == '127.0.0.1' and e['peer'][0] == '127.0.0.1'}
+            if unique:
+                selector['endpointExpectations'] = [dict(role=case, pid=pid,
+                    protocol=selector['expectedProtocols'][0], localIp=local[0], localPort=local[1],
+                    remoteIp=peer[0], remotePort=peer[1]) for pid, local, peer in sorted(unique)]
         selectors.append(selector)
     if report.get("nativeEvents"):
         selectors.append(dict(case="native-clone", domain="process",

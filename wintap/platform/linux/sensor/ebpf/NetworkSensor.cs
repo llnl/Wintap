@@ -45,9 +45,12 @@ namespace gov.llnl.wintap.platform.linux.collect
 
             // Optional: reduce event volume by filtering the tracer to a single PID.
             // This is primarily for validation/benchmark runs.
+            bool pidFilterRequested = false;
+            bool pidFilterApplied = false;
             try
             {
                 var pidStr = ConfigManager.GetValue<string>("WINTAP_NETWORK_CAPTURE_PID");
+                pidFilterRequested = !string.IsNullOrWhiteSpace(pidStr);
                 if (!string.IsNullOrWhiteSpace(pidStr) && uint.TryParse(pidStr, out var capturePid) && capturePid > 0)
                 {
                     IntPtr map = LibBpf.bpf_object__find_map_by_name(BpfObject, "capture_pid");
@@ -61,7 +64,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                             // flags=0 => BPF_ANY
                             int rc = LibBpf.bpf_map_update_elem(fd, ref key, ref value, 0);
                             if (rc == 0)
+                            {
+                                pidFilterApplied = true;
                                 WintapLogger.Log.Append($"{SensorName} tracer PID filter enabled: {capturePid}", LogLevel.Info);
+                            }
                             else
                                 WintapLogger.Log.Append($"{SensorName} failed to set tracer PID filter: rc={rc}", LogLevel.Warn);
                         }
@@ -72,6 +78,10 @@ namespace gov.llnl.wintap.platform.linux.collect
             {
                 WintapLogger.Log.Append($"{SensorName} failed to configure PID filter: {ex.Message}", LogLevel.Debug);
             }
+
+            // Receipt records restriction/outcome, not a private PID/config dump.
+            RuntimeCapabilities.Feature(CapabilityKey, "pidFilterRequested", pidFilterRequested);
+            RuntimeCapabilities.Feature(CapabilityKey, "pidFilterApplied", pidFilterApplied);
 
             // Start a small diag reporter that logs aggregated ringbuffer diag events.
             // This shells out/persists generic diagnostic messages, so keep it opt-in.
@@ -173,18 +183,47 @@ namespace gov.llnl.wintap.platform.linux.collect
 
                     // UDP send/recv (connected + recv peer tuple)
                     "kprobe__udp_sendmsg",
+                    "kretprobe__udp_sendmsg",
                     "kprobe__udp_recvmsg",
                     "kretprobe__udp_recvmsg",
                 };
 
                 int attached = 0;
+                var attachedPrograms = new HashSet<string>();
                 foreach (var programName in programs)
                 {
                     IntPtr link = AttachProgram(programName, applicable: LoadedTier == "core" || !programName.StartsWith("kprobe") && !programName.StartsWith("kretprobe"));
                     if (link == IntPtr.Zero) continue;
 
                     _additionalLinks.Add(link);
+                    attachedPrograms.Add(programName);
                     attached++;
+                }
+
+                // Gate v2 facts on the new object's context-map marker. Mixed
+                // older managed/tracer pairs must not claim these corrections.
+                bool contractV2 = LoadedTier == "core" &&
+                    LibBpf.bpf_object__find_map_by_name(BpfObject, "udp_sendmsg_ctx_map") != IntPtr.Zero;
+                RuntimeCapabilities.Feature(CapabilityKey, "networkContractVersion", contractV2 ? 2 : 0);
+                bool tcpTupleV1 = LoadedTier == "core" &&
+                    LibBpf.bpf_object__find_map_by_name(BpfObject, "tcp_tuple_v1") != IntPtr.Zero;
+                RuntimeCapabilities.Feature(CapabilityKey, "tcpTupleContractVersion", tcpTupleV1 ? 1 : 0);
+                RuntimeCapabilities.Feature(CapabilityKey, "tcpTupleLifecycleHooksAttached", tcpTupleV1 &&
+                    attachedPrograms.Contains("kprobe__tcp_v4_connect") && attachedPrograms.Contains("kretprobe__tcp_v4_connect") &&
+                    attachedPrograms.Contains("kprobe__tcp_close") && attachedPrograms.Contains("kretprobe__inet_csk_accept") &&
+                    attachedPrograms.Contains("kprobe__tcp_sendmsg") && attachedPrograms.Contains("kprobe__tcp_recvmsg"));
+                if (contractV2)
+                {
+                    RuntimeCapabilities.Feature(CapabilityKey, "tcpAcceptReturnAttached", attachedPrograms.Contains("kretprobe__inet_csk_accept"));
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpSendSuccessReturnAttached", attachedPrograms.Contains("kprobe__udp_sendmsg") && attachedPrograms.Contains("kretprobe__udp_sendmsg"));
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpReceiveSuccessReturnAttached", attachedPrograms.Contains("kprobe__udp_recvmsg") && attachedPrograms.Contains("kretprobe__udp_recvmsg"));
+                    RuntimeCapabilities.Feature(CapabilityKey, "tcpSendReceiveSampleIntervalMs", 1000);
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpSendSampleIntervalMs", 1000);
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpConnectedReceiveSampleIntervalMs", 1000);
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpPeerBufferReceiveSampleIntervalMs", 0);
+                    RuntimeCapabilities.Feature(CapabilityKey, "udpByteMeaning", "successful-protocol-return; not syscall/packet conservation");
+                    RuntimeCapabilities.Feature(CapabilityKey, "tcpByteMeaning", "requested-at-entry; sampled; not successful transfer");
+                    RuntimeCapabilities.Feature(CapabilityKey, "localAddressMeaning", "best-effort socket address; loopback wildcard interpretation retained");
                 }
 
                 WintapLogger.Log.Append($"{SensorName} attached {attached} additional network programs", LogLevel.Info);
@@ -301,7 +340,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                     };
                 }
 
+                AttributionTrace.Record(message, "network-producer-prepared");
                 EventChannel.Send(message);
+                AttributionTrace.Record(message, "network-producer-send-returned");
                 return 0;
             }
             catch (Exception ex)

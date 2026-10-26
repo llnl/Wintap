@@ -153,6 +153,16 @@ struct {
     __uint(max_entries, 16384);
 } conn_map SEC(".maps");
 
+// Object capability marker: complete TCP tuples survive state transitions;
+// sampling clocks are not reset, and state callbacks cannot resurrect a closed
+// socket's cache entry. The managed receipt still requires object-hash proof.
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, __u32);
+    __uint(max_entries, 1);
+} tcp_tuple_v1 SEC(".maps");
+
 // Per-socket rate limiting for UDP send/recv probes to avoid event floods.
 struct udp_rate {
     __u64 last_send_ns;
@@ -166,22 +176,7 @@ struct {
     __uint(max_entries, 16384);
 } udp_rate_map SEC(".maps");
 
-// recvfrom context captured at sys_enter so we can read user-provided src_addr
-// after the syscall returns (sys_exit), when the kernel has populated it.
-struct recvfrom_ctx {
-    void *src_addr;
-    int *addrlen;
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u64);
-    __type(value, struct recvfrom_ctx);
-    __uint(max_entries, 8192);
-} recvfrom_ctx_map SEC(".maps");
-
-// For recvfrom syscalls, stash the sock pointer so the udp_recvmsg kretprobe can
-// read local port/address and combine it with the user-provided peer sockaddr.
+// Per-thread kernel socket context, including connected recv without peer buffer.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u64);
@@ -189,13 +184,26 @@ struct {
     __uint(max_entries, 8192);
 } udp_recvmsg_sock_map SEC(".maps");
 
-// pid_tgid -> user-space peer sockaddr pointer (msg_name / src_addr).
+// pid_tgid -> KERNEL msghdr pointer. msg_name and its populated length are
+// read at udp_recvmsg return, before the socket layer copies to user memory.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u64);
     __type(value, __u64);
     __uint(max_entries, 8192);
 } udp_recvmsg_peer_map SEC(".maps");
+
+struct udp_send_context {
+    __u64 sk;
+    __u32 peer_addr;
+    __u16 peer_port;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u64);
+    __type(value, struct udp_send_context);
+    __uint(max_entries, 8192);
+} udp_sendmsg_ctx_map SEC(".maps");
 
 // Helper to emit network event
 static __always_inline void emit_network_event(__u32 pid, __u32 saddr, __u32 daddr,
@@ -285,7 +293,7 @@ int trace_inet_sock_set_state(struct inet_sock_set_state_args *ctx)
 
     // NOTE: On some RHEL8 kernels, the inet_sock_set_state tracepoint's
     // old/new state fields don't reliably match the TCP_* constants. We keep
-    // this tracepoint purely for populating conn_map (tuple cache), and emit
+    // this tracepoint purely for refreshing conn_map (tuple cache), and emit
     // TcpIpConnect/TcpIpDisconnect from tcp_v4_connect kretprobes / tcp_close
     // kprobes instead.
     __u8 op_type = 0;
@@ -334,19 +342,17 @@ int trace_inet_sock_set_state(struct inet_sock_set_state_args *ctx)
     __u16 sport = BPF_CORE_READ(sock, __sk_common.skc_num);
     __u16 dport = bpf_ntohs(BPF_CORE_READ(sock, __sk_common.skc_dport));
 
-    // Store a copy of the connection tuple keyed by socket pointer so other
-    // kprobe-based handlers can later lookup addresses without reading
-    // kernel struct fields. This is used for:
-    // - TCP send/recv
-    // - UDP send/recv for connected UDP sockets (connect+sendmsg/recvmsg)
-    struct conn_info cinfo = {};
-    cinfo.saddr = saddr;
-    cinfo.daddr = daddr;
-    cinfo.sport = sport;
-    cinfo.dport = dport;
-    cinfo.start_ns = bpf_ktime_get_ns();
-    __u64 sk_key_for_store = (__u64)sk;
-    bpf_map_update_elem(&conn_map, &sk_key_for_store, &cinfo, BPF_ANY);
+    // TCP teardown can clear skc_num before this callback. Never replace a
+    // learned complete tuple with that partial live snapshot, nor reset sample
+    // clocks on FIN/state transitions. Connect/accept/data own cache creation;
+    // a callback after tcp_close deletion must not resurrect the pointer key.
+    struct conn_info *ci = bpf_map_lookup_elem(&conn_map, &sk_key);
+    if (ci && saddr && daddr && sport && dport) {
+        ci->saddr = saddr;
+        ci->daddr = daddr;
+        ci->sport = sport;
+        ci->dport = dport;
+    }
 
     return 0;
 }
@@ -409,6 +415,9 @@ int kprobe__tcp_v4_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -459,6 +468,9 @@ int kprobe__tcp_v6_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -508,6 +520,9 @@ int kprobe__tcp_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -556,9 +571,13 @@ int kprobe__tcp_close(struct pt_regs *ctx)
         return 0;
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = (__u32)(pid_tgid >> 32);
-    if (!pid_allowed(pid))
-        return 0;
-    emit_tcp_disconnect_event(pid, sk);
+    if (pid_allowed(pid))
+        emit_tcp_disconnect_event(pid, sk);
+    // A different thread/process may close a shared socket. Cleanup must not
+    // depend on the current task matching the optional capture filter.
+    __u64 sk_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &sk_key);
+    bpf_map_delete_elem(&sock_pid_map, &sk_key);
     return 0;
 }
 
@@ -568,7 +587,7 @@ SEC("kretprobe/inet_csk_accept")
 int kretprobe__inet_csk_accept(struct pt_regs *ctx)
 {
     void *sk = (void *)PT_REGS_RC(ctx);
-    if (!sk)
+    if (!sk || (__u64)sk >= (__u64)-4095)
         return 0;
 
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -580,6 +599,19 @@ int kretprobe__inet_csk_accept(struct pt_regs *ctx)
     info.source = SOCK_SRC_ACCEPT;
     __u64 sk_key = (__u64)sk;
     bpf_map_update_elem(&sock_pid_map, &sk_key, &info, BPF_ANY);
+    struct sock *sock = (struct sock *)sk;
+    if (BPF_CORE_READ(sock, __sk_common.skc_family) != AF_INET)
+        return 0;
+    struct conn_info ci = {};
+    ci.saddr = BPF_CORE_READ(sock, __sk_common.skc_rcv_saddr);
+    ci.daddr = BPF_CORE_READ(sock, __sk_common.skc_daddr);
+    ci.sport = BPF_CORE_READ(sock, __sk_common.skc_num);
+    ci.dport = bpf_ntohs(BPF_CORE_READ(sock, __sk_common.skc_dport));
+    ci.start_ns = bpf_ktime_get_ns();
+    bpf_map_update_elem(&conn_map, &sk_key, &ci, BPF_ANY);
+    // Cache is host-relative; normalized Accept is inbound remote -> local.
+    emit_network_event(info.pid, ci.daddr, ci.saddr, ci.dport, ci.sport,
+                       PROTO_TCP, NET_OP_TCP_ACCEPT, 0);
     return 0;
 }
 
@@ -598,10 +630,9 @@ int kprobe__tcp_sendmsg(struct pt_regs *ctx)
         return 0;
     __u64 len = (__u64)PT_REGS_PARM3(ctx);
 
-    // Prefer connection tuple from conn_map (populated by
-    // trace_inet_sock_set_state). However, on some kernels the tracepoint
-    // argument layout differs enough that saddr/daddr may stay zero. For data
-    // quality, fall back to reading from `struct sock`.
+    // Prefer the connection tuple learned by connect/accept/data and refreshed
+    // by state callbacks. If capture began mid-connection or the cache is absent,
+    // fall back to live `struct sock` fields without guessing missing endpoints.
     __u64 sk_key = (__u64)sk;
     __u64 now = bpf_ktime_get_ns();
     struct conn_info *ci = bpf_map_lookup_elem(&conn_map, &sk_key);
@@ -697,46 +728,71 @@ int kprobe__tcp_recvmsg(struct pt_regs *ctx)
 SEC("kprobe/udp_sendmsg")
 int kprobe__udp_sendmsg(struct pt_regs *ctx)
 {
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    bpf_map_delete_elem(&udp_sendmsg_ctx_map, &pid_tgid);
     void *sk = (void *)PT_REGS_PARM1(ctx);
     if (!sk)
         return 0;
 
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = (__u32)(pid_tgid >> 32);
     if (!pid_allowed(pid))
         return 0;
-    __u64 len = (__u64)PT_REGS_PARM3(ctx);
-
-    __u64 sk_key = (__u64)sk;
-
-    __u64 now = bpf_ktime_get_ns();
-    const __u64 min_interval_ns = 1ULL * 1000000000ULL; // 1 second
-    struct udp_rate *ur = bpf_map_lookup_elem(&udp_rate_map, &sk_key);
-    if (ur) {
-        if (ur->last_send_ns && (now - ur->last_send_ns) < min_interval_ns)
+    struct udp_send_context saved = { .sk = (__u64)sk };
+    struct sock *sock = (struct sock *)sk;
+    if (BPF_CORE_READ(sock, __sk_common.skc_family) != AF_INET)
+        return 0;
+    saved.peer_addr = BPF_CORE_READ(sock, __sk_common.skc_daddr);
+    saved.peer_port = bpf_ntohs(BPF_CORE_READ(sock, __sk_common.skc_dport));
+    struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
+    if (!msg) return 0;
+    void *name = BPF_CORE_READ(msg, msg_name);
+    if (name) {
+        int namelen = BPF_CORE_READ(msg, msg_namelen);
+        struct sockaddr_in peer = {};
+        if (namelen < sizeof(peer) || bpf_probe_read_kernel(&peer, sizeof(peer), name) != 0 || peer.sin_family != AF_INET)
             return 0;
+        saved.peer_addr = peer.sin_addr.s_addr;
+        saved.peer_port = bpf_ntohs(peer.sin_port);
+    }
+    bpf_map_update_elem(&udp_sendmsg_ctx_map, &pid_tgid, &saved, BPF_ANY);
+    return 0;
+}
+
+SEC("kretprobe/udp_sendmsg")
+int kretprobe__udp_sendmsg(struct pt_regs *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    struct udp_send_context *entry = bpf_map_lookup_elem(&udp_sendmsg_ctx_map, &pid_tgid);
+    if (!entry) return 0;
+    struct udp_send_context saved = *entry;
+    bpf_map_delete_elem(&udp_sendmsg_ctx_map, &pid_tgid);
+    // udp_sendmsg returns int. arm64 may zero-extend w0; explicitly sign-extend
+    // so -EMSGSIZE/-EAGAIN cannot masquerade as a positive byte count.
+    long ret = (int)PT_REGS_RC(ctx);
+    if (ret < 0 || !pid_allowed(pid_tgid >> 32)) return 0;
+    struct sock *sock = (struct sock *)saved.sk;
+    __u32 saddr = BPF_CORE_READ(sock, __sk_common.skc_rcv_saddr);
+    __u16 sport = BPF_CORE_READ(sock, __sk_common.skc_num);
+    if (!sport || !saved.peer_port) return 0;
+    // Preserve send sampling; failed calls no longer consume it. The local
+    // port is now read after autobind, and unconnected peer comes from msg_name.
+    __u64 now = bpf_ktime_get_ns();
+    const __u64 min_interval_ns = 1ULL * 1000000000ULL;
+    struct udp_rate *ur = bpf_map_lookup_elem(&udp_rate_map, &saved.sk);
+    if (ur) {
+        if (ur->last_send_ns && now - ur->last_send_ns < min_interval_ns) return 0;
         ur->last_send_ns = now;
     } else {
-        struct udp_rate init = {};
-        init.last_send_ns = now;
-        bpf_map_update_elem(&udp_rate_map, &sk_key, &init, BPF_ANY);
+        struct udp_rate initial = { .last_send_ns = now };
+        bpf_map_update_elem(&udp_rate_map, &saved.sk, &initial, BPF_ANY);
     }
-
-    __u32 saddr = 0, daddr = 0;
-    __u16 sport = 0, dport = 0;
-    struct sock *sock = (struct sock *)sk;
-    daddr = BPF_CORE_READ(sock, __sk_common.skc_daddr);
-    saddr = BPF_CORE_READ(sock, __sk_common.skc_rcv_saddr);
-    dport = BPF_CORE_READ(sock, __sk_common.skc_dport);
-    sport = BPF_CORE_READ(sock, __sk_common.skc_num);
-    dport = bpf_ntohs(dport);
 
     // Many local resolvers bind sockets to INADDR_ANY, leaving skc_rcv_saddr=0.
     // For loopback destinations we can safely treat the local IP as 127.0.0.1.
-    if (saddr == 0 && ((daddr & 0xff) == 0x7f))
+    if (saddr == 0 && ((saved.peer_addr & 0xff) == 0x7f))
         saddr = 0x0100007f;
 
-    emit_network_event(pid, saddr, daddr, sport, dport, PROTO_UDP, NET_OP_UDP_SEND, (__u32)len);
+    emit_network_event(pid_tgid >> 32, saddr, saved.peer_addr, sport, saved.peer_port, PROTO_UDP, NET_OP_UDP_SEND, (__u32)ret);
     return 0;
 }
 
@@ -744,129 +800,84 @@ int kprobe__udp_sendmsg(struct pt_regs *ctx)
 SEC("kprobe/udp_recvmsg")
 int kprobe__udp_recvmsg(struct pt_regs *ctx)
 {
-    void *sk = (void *)PT_REGS_PARM1(ctx);
-    if (!sk)
-        return 0;
-
     __u64 pid_tgid = bpf_get_current_pid_tgid();
+    bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
+    bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
+    void *sk = (void *)PT_REGS_PARM1(ctx);
+    __u64 msg_ptr = (__u64)PT_REGS_PARM2(ctx);
+    if (!sk || !msg_ptr)
+        return 0;
     __u32 pid = (__u32)(pid_tgid >> 32);
     if (!pid_allowed(pid))
         return 0;
-    (void)PT_REGS_PARM3(ctx);
-
-    // If the caller provided a peer address buffer (recvfrom/recvmsg/recvmmsg),
-    // defer emitting until return so we can read the populated sockaddr.
-    __u64 peer_ptr = 0;
-    struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
-    if (msg) {
-        void *name = BPF_CORE_READ(msg, msg_name);
-        if (name)
-            peer_ptr = (__u64)name;
-    }
-    if (peer_ptr == 0) {
-        struct recvfrom_ctx *rctx = bpf_map_lookup_elem(&recvfrom_ctx_map, &pid_tgid);
-        if (rctx)
-            peer_ptr = (__u64)rctx->src_addr;
-    }
-    if (peer_ptr != 0) {
-        __u64 sk_key = (__u64)sk;
-        bpf_map_update_elem(&udp_recvmsg_sock_map, &pid_tgid, &sk_key, BPF_ANY);
-        bpf_map_update_elem(&udp_recvmsg_peer_map, &pid_tgid, &peer_ptr, BPF_ANY);
-        return 0;
-    }
-
     __u64 sk_key = (__u64)sk;
-
-    __u64 now = bpf_ktime_get_ns();
-    const __u64 min_interval_ns = 1ULL * 1000000000ULL; // 1 second
-    struct udp_rate *ur = bpf_map_lookup_elem(&udp_rate_map, &sk_key);
-    if (ur) {
-        if (ur->last_recv_ns && (now - ur->last_recv_ns) < min_interval_ns)
-            return 0;
-        ur->last_recv_ns = now;
-    } else {
-        struct udp_rate init = {};
-        init.last_recv_ns = now;
-        bpf_map_update_elem(&udp_rate_map, &sk_key, &init, BPF_ANY);
+    if (bpf_map_update_elem(&udp_recvmsg_sock_map, &pid_tgid, &sk_key, BPF_ANY) != 0 ||
+        bpf_map_update_elem(&udp_recvmsg_peer_map, &pid_tgid, &msg_ptr, BPF_ANY) != 0) {
+        bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
+        bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
     }
-
-    __u32 laddr = 0, raddr = 0;
-    __u16 lport = 0, rport = 0;
-    struct sock *sock = (struct sock *)sk;
-    raddr = BPF_CORE_READ(sock, __sk_common.skc_daddr);
-    laddr = BPF_CORE_READ(sock, __sk_common.skc_rcv_saddr);
-    rport = BPF_CORE_READ(sock, __sk_common.skc_dport);
-    lport = BPF_CORE_READ(sock, __sk_common.skc_num);
-    rport = bpf_ntohs(rport);
-
-    // Unconnected sockets (skc_daddr/skc_dport == 0) don't have a peer tuple.
-    // If the caller didn't request the peer sockaddr, we can't recover it
-    // from the sock at this probe site.
-    if (raddr == 0 && rport == 0)
-        return 0;
-
-    // For loopback peers, map INADDR_ANY local addr to 127.0.0.1 for clarity.
-    if (laddr == 0 && ((raddr & 0xff) == 0x7f))
-        laddr = 0x0100007f;
-
-    // For recv, remote is the source and local is the destination.
-    emit_network_event(pid, raddr, laddr, rport, lport, PROTO_UDP, NET_OP_UDP_RECV, 0);
     return 0;
 }
 
-// When recvfrom() is used, the kernel fills the caller-provided src_addr on
-// udp_recvmsg return. Use that sockaddr for the peer and the sock tuple for
-// the local port/address so UdpIpRecv includes the destination fields.
+// One successful-return owner for connected recv and peer-buffer recvfrom/msg.
 SEC("kretprobe/udp_recvmsg")
 int kretprobe__udp_recvmsg(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = (__u32)(pid_tgid >> 32);
-    if (!pid_allowed(pid))
-        return 0;
-
-    long ret = (long)PT_REGS_RC(ctx);
-    if (ret <= 0) {
-        bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
-        bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
-        bpf_map_delete_elem(&recvfrom_ctx_map, &pid_tgid);
-        return 0;
-    }
-
     __u64 *sk_keyp = bpf_map_lookup_elem(&udp_recvmsg_sock_map, &pid_tgid);
-    if (!sk_keyp) {
-        return 0;
-    }
-
     __u64 *peer_ptrp = bpf_map_lookup_elem(&udp_recvmsg_peer_map, &pid_tgid);
-    if (!peer_ptrp) {
-        return 0;
-    }
+    __u64 sk_key = sk_keyp ? *sk_keyp : 0;
+    __u64 msg_ptr = peer_ptrp ? *peer_ptrp : 0;
+    // Copy context then clean on EVERY outcome, including failed reads/filtering.
+    bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
+    bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
+    // udp_recvmsg returns int, including on arm64 where w0 is zero-extended.
+    long ret = (int)PT_REGS_RC(ctx);
+    if (ret < 0 || !sk_key || !msg_ptr || !pid_allowed(pid))
+        return 0; // ret==0 is a legitimate zero-length datagram.
 
-    struct sockaddr_in peer = {};
-    bpf_probe_read_user(&peer, sizeof(peer), (void *)(*peer_ptrp));
-    if (peer.sin_family != AF_INET) {
-        bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
-        bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
-        bpf_map_delete_elem(&recvfrom_ctx_map, &pid_tgid);
+    struct sock *sock = (struct sock *)sk_key;
+    if (BPF_CORE_READ(sock, __sk_common.skc_family) != AF_INET)
         return 0;
-    }
-
-    struct sock *sock = (struct sock *)(*sk_keyp);
     __u32 laddr = BPF_CORE_READ(sock, __sk_common.skc_rcv_saddr);
     __u16 lport = BPF_CORE_READ(sock, __sk_common.skc_num);
-
-    __u32 raddr = peer.sin_addr.s_addr;
-    __u16 rport = bpf_ntohs(peer.sin_port);
-
+    __u32 raddr = BPF_CORE_READ(sock, __sk_common.skc_daddr);
+    __u16 rport = bpf_ntohs(BPF_CORE_READ(sock, __sk_common.skc_dport));
+    struct msghdr *msg = (struct msghdr *)msg_ptr;
+    void *name = BPF_CORE_READ(msg, msg_name);
+    if (name) {
+        struct sockaddr_in peer = {};
+        // inet_recvmsg updates msg_namelen AFTER udp_recvmsg returns. The
+        // socket layer supplies kernel sockaddr_storage regardless of the
+        // user's address length, so do not reject its still-zero length here.
+        if (bpf_probe_read_kernel(&peer, sizeof(peer), name) != 0 ||
+            peer.sin_family != AF_INET)
+            return 0;
+        raddr = peer.sin_addr.s_addr;
+        rport = bpf_ntohs(peer.sin_port);
+    } else {
+        // Preserve connected-receive one-second sampling, but only successful
+        // calls consume it. Peer-buffer receives remain unsampled as before.
+        __u64 now = bpf_ktime_get_ns();
+        const __u64 min_interval_ns = 1ULL * 1000000000ULL;
+        struct udp_rate *ur = bpf_map_lookup_elem(&udp_rate_map, &sk_key);
+        if (ur) {
+            if (ur->last_recv_ns && now - ur->last_recv_ns < min_interval_ns)
+                return 0;
+            ur->last_recv_ns = now;
+        } else {
+            struct udp_rate init = { .last_recv_ns = now };
+            bpf_map_update_elem(&udp_rate_map, &sk_key, &init, BPF_ANY);
+        }
+    }
+    if (!rport || !lport)
+        return 0; // No recoverable peer/socket tuple, not a fabricated port.
     if (laddr == 0 && ((raddr & 0xff) == 0x7f))
         laddr = 0x0100007f;
 
     emit_network_event(pid, raddr, laddr, rport, lport, PROTO_UDP, NET_OP_UDP_RECV, (__u32)ret);
 
-    bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
-    bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
-    bpf_map_delete_elem(&recvfrom_ctx_map, &pid_tgid);
     return 0;
 }
 
@@ -934,7 +945,7 @@ SEC("tracepoint/syscalls/sys_enter_accept")
 int trace_accept(struct accept_args *ctx)
 {
     // Peer/local addresses are not available at sys_enter_accept time. TCP
-    // accept events are emitted from trace_inet_sock_set_state instead.
+    // Accept is emitted only from successful inet_csk_accept return.
     (void)ctx;
     return 0;
 }
@@ -954,27 +965,9 @@ struct sendto_args {
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int trace_sendto(struct sendto_args *ctx)
 {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 pid = pid_tgid >> 32;
-    if (!pid_allowed(pid))
-        return 0;
-    
-    if (ctx->dest_addr)
-    {
-        struct sockaddr_in addr;
-        bpf_probe_read_user(&addr, sizeof(addr), ctx->dest_addr);
-        
-        if (addr.sin_family == 2)
-        {
-            emit_network_event(pid, 0, addr.sin_addr.s_addr, 0,
-                              bpf_ntohs(addr.sin_port), PROTO_UDP,
-                              NET_OP_UDP_SEND, (__u32)ctx->len);
-        }
-    }
-    // For connected TCP sockets, sys_enter_sendto does not include the local
-    // or remote socket addresses. Avoid emitting placeholder 0.0.0.0 TCP
-    // events here; TCP connection addresses come from inet_sock_set_state.
-    
+    // Core UDP emits once on successful udp_sendmsg return. Syscall entry
+    // cannot establish protocol, success or an autobound local port.
+    (void)ctx;
     return 0;
 }
 
@@ -993,20 +986,8 @@ struct recvfrom_args {
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int trace_recvfrom(struct recvfrom_args *ctx)
 {
-    // src_addr is written by the kernel on syscall return, so stash the user
-    // pointers here and read them in sys_exit_recvfrom.
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 pid = (__u32)(pid_tgid >> 32);
-    if (!pid_allowed(pid))
-        return 0;
-
-    if (ctx->src_addr)
-    {
-        struct recvfrom_ctx rctx = {};
-        rctx.src_addr = (void *)ctx->src_addr;
-        rctx.addrlen = ctx->addrlen;
-        bpf_map_update_elem(&recvfrom_ctx_map, &pid_tgid, &rctx, BPF_ANY);
-    }
+    // No user pointer stash or duplicate emission; udp_recvmsg owns the event.
+    (void)ctx;
     return 0;
 }
 
@@ -1020,29 +1001,10 @@ SEC("tracepoint/syscalls/sys_exit_recvfrom")
 int trace_recvfrom_exit(struct sys_exit_args *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
-    struct recvfrom_ctx *rctx = bpf_map_lookup_elem(&recvfrom_ctx_map, &pid_tgid);
-    if (!rctx)
-        return 0;
-
-    // Always delete to avoid leaks.
-    bpf_map_delete_elem(&recvfrom_ctx_map, &pid_tgid);
-
-    // Best-effort cleanup if kretprobe didn't run.
+    // Cleanup only if a return hook did not run. Never emit after copying to user.
+    (void)ctx;
     bpf_map_delete_elem(&udp_recvmsg_peer_map, &pid_tgid);
-
-    // If the udp_recvmsg kretprobe handled this recvfrom, it will have already
-    // emitted a fully-populated event and deleted the sock map entry. In that
-    // case, do nothing here.
-    if (!bpf_map_lookup_elem(&udp_recvmsg_sock_map, &pid_tgid))
-        return 0;
-
-    // Best-effort cleanup.
     bpf_map_delete_elem(&udp_recvmsg_sock_map, &pid_tgid);
-
-    // NOTE: recvfrom events are emitted from the udp_recvmsg kretprobe so we
-    // can combine the peer sockaddr (written into user memory) with the local
-    // sock tuple. Keeping this tracepoint as "cleanup only" avoids emitting
-    // partial events with missing destination fields.
     return 0;
 }
 

@@ -14,6 +14,10 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal class ExitSensor : BaseEbpfSensor
     {
         private ProcessHash _pidHashGenerator;
+        private LifecycleShadowWriter shadow;
+        private long monotonicOffset;
+        private bool retainExitEvidence;
+        private long exitEvidenceRetained, exitEvidenceRejected;
         protected override string BpfObjectFileName => "exit_tracer.bpf.o";
         protected override string[] FallbackBpfObjectFileNames => new[] { "exit_tracepoint.bpf.o" };
         protected override string BpfProgramName => "trace_process_exit";
@@ -26,13 +30,31 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         protected override LibBpf.RingBufferCallback GetRingBufferCallback() => HandleEvent;
 
+        protected override bool OnStarting()
+        {
+            monotonicOffset = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
+            retainExitEvidence = string.Equals(Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_EXIT_IDENTITY_RECOVERY"), "true", StringComparison.OrdinalIgnoreCase);
+            WintapLogger.Log.Append($"Experimental exit identity recovery: enabled={retainExitEvidence}; bounded historical identity cache; no synthetic Start", LogLevel.Info);
+            string path = Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_LIFECYCLE_SHADOW_PATH");
+            if (!string.IsNullOrWhiteSpace(path)) shadow = new LifecycleShadowWriter(path);
+            return true;
+        }
+
+        protected override void OnStopping()
+        {
+            WintapLogger.Log.Append($"Experimental exit identity recovery cumulative: retained={exitEvidenceRetained},rejected={exitEvidenceRejected}", LogLevel.Info);
+            shadow?.Dispose();
+            shadow = null;
+        }
+
         private int HandleEvent(IntPtr ctx, IntPtr data, UIntPtr size)
         {
             try
             {
-                var evt = Marshal.PtrToStructure<ExitEvent>(data);
+                var starts = LinuxLifecycleEvidence.ReadStartTimes(data, size.ToUInt64());
+                var evt = Marshal.PtrToStructure<ExitEvent>(data); // legacy 48-byte prefix
 
-                DateTime exitUtc = DateTime.UtcNow;
+                DateTime exitUtc = KernelTimestampConverter.ToUtcDateTime(evt.TimestampNs, monotonicOffset);
 
                 // Prefer resolver data so Stop events match the original Start PidHash.
                 var resolved = EventChannel.GetProcessHistory((int)evt.Pid, exitUtc);
@@ -98,30 +120,30 @@ namespace gov.llnl.wintap.platform.linux.collect
                     exitCode: evt.ExitCode
                 );
 
-                // Stable PidHash: use resolver PidHash if available; else try /proc start time; else fall back to exit time.
-                if (!string.IsNullOrWhiteSpace(resolved?.PidHash))
-                {
-                    message.PidHash = resolved.PidHash;
-                }
-                else
-                {
-                    // The process may have exited before its Clone/Execve
-                    // Start event is registered. Ask the resolver for its
-                    // live /proc-derived stable identity before using an
-                    // exit-time fallback, which would create a Stop-only
-                    // process identity.
-                    string livePidHash = EventChannel.GetStablePidHash((int)evt.Pid, exitUtc);
-                    if (!string.IsNullOrWhiteSpace(livePidHash))
-                    {
-                        message.PidHash = livePidHash;
-                    }
-                    else
-                    {
-                        var startUtc = procData.StartTimeUtc != default ? procData.StartTimeUtc.ToUniversalTime() : exitUtc;
-                        message.PidHash = _pidHashGenerator?.GenPidHash(message.PID, startUtc.ToFileTimeUtc()) ?? "";
-                    }
-                }
+                DateTime? kernelStart = ProcReader.TryConvertBootNsToUtc(starts.BootNs);
+                DateTime? canonicalStart = LinuxLifecycleEvidence.SelectBirthStart(kernelStart, procData.StartTimeUtc);
+                string liveHash = !kernelStart.HasValue && string.IsNullOrWhiteSpace(resolved?.PidHash)
+                    ? EventChannel.GetStablePidHash((int)evt.Pid, exitUtc) : null;
+                string identitySource = !string.IsNullOrWhiteSpace(resolved?.PidHash) ? "history" :
+                    !string.IsNullOrWhiteSpace(liveHash) ? "live-resolver" :
+                    kernelStart.HasValue ? "kernel-start" : procData.StartTimeUtc != default ? "proc-start" : "unresolved";
+                message.PidHash = LinuxLifecycleEvidence.SelectExitHash(resolved?.PidHash, liveHash,
+                    canonicalStart, start => _pidHashGenerator.GenPidHash(message.PID, start),
+                    _pidHashGenerator.GenPidHash(-1, 0));
                 message.ProcessName = processName;
+                bool evidenceRetained = retainExitEvidence && resolved == null && kernelStart.HasValue &&
+                    EventChannel.RetainExitIdentityEvidence(message, kernelStart.Value);
+                if (retainExitEvidence && resolved == null)
+                {
+                    if (evidenceRetained) System.Threading.Interlocked.Increment(ref exitEvidenceRetained);
+                    else System.Threading.Interlocked.Increment(ref exitEvidenceRejected);
+                    message.Process.Arguments = "PROC_LIFECYCLE=exit-only;PROC_EXIT_EVIDENCE=" + (evidenceRetained ? "retained" : "unavailable");
+                }
+                shadow?.TryWrite(LinuxLifecycleEvidence.Classify(message.PID,
+                    identitySource == "unresolved" ? null : message.PidHash, identitySource,
+                    processName, evt.Uid, evt.TimestampNs, starts.MonotonicNs, starts.BootNs) with
+                    { ExitEvidenceRetained = evidenceRetained,
+                      LifecycleCoverage = resolved == null ? "exit-only" : "not-assessed" });
 
                 // Prefer parent's PidHash from resolver, else populate via /proc.
                 if (!string.IsNullOrWhiteSpace(resolved?.ParentPidHash))

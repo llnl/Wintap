@@ -13,7 +13,7 @@ Wintap is a researcher-first host-telemetry collection and analytics platform
 telemetry, an MEF plugin architecture, an Esper CEP engine for live EPL queries,
 and open output formats (Parquet, CSV) queried with DuckDB.
 
-- **Stack:** .NET 8.0 | MEF | Esper CEP | DuckDB | TraceEvent | Parquet
+- **Stack:** .NET 10 (SDK 10.0.402) | MEF | Esper CEP | DuckDB | TraceEvent | Parquet
 - **Platforms:** Windows (stable), Linux (in development), macOS (experimental)
 - **Unified data model:** all telemetry flows through `WintapMessage`.
 
@@ -194,7 +194,7 @@ Design the smallest solution that fully meets the stated requirements.
 
 ## Coding Standards
 
-- Target .NET 8.0; match the style of surrounding code.
+- Target .NET 10.0 (SDK 10.0.402; Windows-qualified TFMs where required); match the style of surrounding code.
 - Do not add NuGet dependencies without flagging them to the Architect first.
 - Never store secrets, API keys, or connection strings in code — use
   environment variables or gitignored local config.

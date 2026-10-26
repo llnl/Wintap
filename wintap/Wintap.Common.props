@@ -22,6 +22,10 @@
 
   <!-- ===== File exclusions common to all platforms (unchanged) ===== -->
   <ItemGroup>
+    <!-- Never publish initialized developer state from the working directory. -->
+    <None Remove="wintapstate.json;core\shared\agent-state-template.json" />
+    <Content Remove="wintapstate.json;core\shared\agent-state-template.json" />
+    <Content Include="core\shared\agent-state-template.json" Link="wintapstate.json" TargetPath="wintapstate.json" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
     <Compile Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />
     <Content Remove="App_Start\**;binary\**" />
     <EmbeddedResource Remove="App_Start\**;binary\**;MergeHelper\**;WintapAPI\**;WintapETL\**;WintapRecorder\**;WintapSvcMgr\**" />

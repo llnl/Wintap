@@ -28,7 +28,7 @@ namespace gov.llnl.wintap.core.infrastructure
     internal class ProcessResolver : IProcessResolver
     {
         private readonly ProcessHash processHash;
-        private string MAIN_DB_PATH = Path.Combine(Paths.EventStorePath, "main.duckdb");
+        private string MAIN_DB_PATH = Path.Combine(Paths.EventStorePath, ProcessIdentity.MainStoreFileName);
         private DuckDBConnection connection;
         private readonly object _dbLock = new object();
         private readonly ConcurrentDictionary<int, ActiveProcessCacheEntry> _activeProcesses = new ConcurrentDictionary<int, ActiveProcessCacheEntry>();
@@ -68,6 +68,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
         private struct PendingExit
         {
+            public string CanonicalPidHash;
             public DateTime ExitTime;
             public long ExitCode;
             public string ParentPidHash;
@@ -192,8 +193,7 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             if (string.IsNullOrWhiteSpace(pidHash) ||
                 string.Equals(pidHash, "Unknown", StringComparison.OrdinalIgnoreCase) ||
-                pidHash == processHash.GenKeyForProcess("llnl", Environment.MachineName,
-                    Guid.TryParse(agentId, out Guid storedAgentId) ? storedAgentId : Guid.Empty, -1, 0, "Process"))
+                pidHash == processHash.GenPidHash(-1, 0))
                 return new AttributedProcessPath(null, "missing_identity");
             if (!System.Threading.Monitor.TryEnter(_dbLock, 20))
                 return new AttributedProcessPath(null, "resolver_busy");
@@ -334,6 +334,44 @@ namespace gov.llnl.wintap.core.infrastructure
                     resolved.ExitTime.Value);
             }
             return resolved;
+        }
+
+        // Experimental exit-only evidence uses the existing bounded, lifetime-keyed
+        // cache. It never inserts a Start, durable process row, or active identity.
+        public bool RetainExitIdentityEvidence(WintapMessage stop, DateTime kernelStartUtc)
+        {
+            if (_historicalIdentityCacheCapacity <= 0 || stop?.Process == null || stop.PID <= 0 ||
+                stop.MessageType != WintapMessage.MessageTypeEnum.Process ||
+                stop.ActivityType != WintapMessage.ActivityTypeEnum.Stop ||
+                kernelStartUtc < DateTime.FromFileTimeUtc(0) || kernelStartUtc.Kind != DateTimeKind.Utc || stop.EventTime <= 0 ||
+                kernelStartUtc.ToFileTimeUtc() > stop.EventTime ||
+                stop.PidHash != processHash.GenPidHash(stop.PID, kernelStartUtc.ToFileTimeUtc())) return false;
+            lock (_dbLock)
+            {
+                // Never downgrade a captured lifecycle record or richer cached identity.
+                if (ResolveProcessAtTime(stop.PID, DateTime.FromFileTimeUtc(stop.EventTime)) != null ||
+                    _historicalIdentityCache.TryGetWithoutCounting(stop.PID,
+                        DateTime.FromFileTimeUtc(stop.EventTime), out _)) return false;
+                var evidence = new ProcessRecord
+                {
+                    ProcessId = stop.PID, PidHash = stop.PidHash,
+                    ProcessName = NormalizeProcessName(stop.ProcessName),
+                    CreateTime = kernelStartUtc, ExitTime = DateTime.FromFileTimeUtc(stop.EventTime),
+                    Source = ProcessRecord.ProcessSourceEnum.exit_evidence
+                };
+                _historicalIdentityCache.Set(stop.PID, stop.PidHash, evidence.CreateTime,
+                    evidence.ExitTime.Value, evidence);
+                AttributionTrace.Record(stop, "exit-evidence-retained");
+                return true;
+            }
+        }
+
+        public bool TryResolveExitIdentityEvidence(int pid, DateTime eventTime, out ProcessRecord evidence)
+        {
+            if (_historicalIdentityCache.TryGetWithoutCounting(pid, eventTime, out evidence) &&
+                evidence.Source == ProcessRecord.ProcessSourceEnum.exit_evidence) return true;
+            evidence = null;
+            return false;
         }
 
         // BAM can write in the exiting process context just after the kernel ProcessStop.
@@ -577,8 +615,9 @@ namespace gov.llnl.wintap.core.infrastructure
 
                     if (!TryGetProcessRowStateLocked(pidHash, out bool rowWasOpen, out string existingProcessName))
                     {
-                        AddPendingExit(message.PID, exitTime, exitCode, proc.ParentPidHash, proc.ParentPID, proc.Name);
+                        AddPendingExit(message.PID, exitTime, exitCode, proc.ParentPidHash, proc.ParentPID, proc.Name, rawPidHash);
                         RemoveActiveProcessCacheEntry(message.PID, rawPidHash);
+                        AttributionTrace.Record(message, "stop-pending");
                         LogRegistrationOrClear(
                             $"Queued unmatched Stop for PID {message.PID} {proc.Name}; no existing process row for PidHash {pidHash}",
                             LogLevel.Debug);
@@ -601,7 +640,7 @@ namespace gov.llnl.wintap.core.infrastructure
                         var rows = updateCmd.ExecuteNonQuery();
                         if (rows == 0)
                         {
-                            AddPendingExit(message.PID, exitTime, exitCode, proc.ParentPidHash, proc.ParentPID, proc.Name);
+                            AddPendingExit(message.PID, exitTime, exitCode, proc.ParentPidHash, proc.ParentPID, proc.Name, rawPidHash);
                         }
                         else if (rowWasOpen)
                         {
@@ -610,6 +649,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
                         RemoveActiveProcessCacheEntry(message.PID, rawPidHash);
 
+                        AttributionTrace.Record(message, rows == 0 ? "stop-pending" : "stop-updated");
                         return;
                     }
                     catch (Exception ex)
@@ -625,10 +665,18 @@ namespace gov.llnl.wintap.core.infrastructure
                 try
                 {
                     if (!UpsertProcessStart(connection, message, createTime))
+                    {
+                        AttributionTrace.Record(message, "birth-upsert-skipped");
                         return;
+                    }
                     SetActiveProcessCacheEntry(message.PID, rawPidHash, proc.Name, createTime);
                     ApplyPendingExit(message.PID, rawPidHash, createTime);
+                    // A real birth supersedes partial exit evidence for this identity only.
+                    if (_historicalIdentityCache.TryGetWithoutCounting(message.PID, createTime, out var cached) &&
+                        cached.PidHash == rawPidHash && cached.Source == ProcessRecord.ProcessSourceEnum.exit_evidence)
+                        _historicalIdentityCache.Remove(message.PID, rawPidHash);
 
+                    AttributionTrace.Record(message, "birth-registered");
                     LogRegistrationOrClear(
                         $"Registered process PID {message.PID}: {proc.Name} with process resolver",
                         LogLevel.Debug);
@@ -927,7 +975,7 @@ namespace gov.llnl.wintap.core.infrastructure
             return configured > 0 ? TimeSpan.FromSeconds(configured) : defaultValue;
         }
 
-        private void AddPendingExit(int pid, DateTime exitTime, long exitCode, string parentPidHash, int parentPid, string processName)
+        private void AddPendingExit(int pid, DateTime exitTime, long exitCode, string parentPidHash, int parentPid, string processName, string pidHash)
         {
             PrunePendingExits(exitTime.AddMinutes(-15));
 
@@ -939,6 +987,9 @@ namespace gov.llnl.wintap.core.infrastructure
 
             exits.Add(new PendingExit
             {
+                // Legacy unresolved Stops retain their existing fallback. A canonical
+                // identity must never close a different reused-PID instance.
+                CanonicalPidHash = pidHash?.Length == 32 && pidHash.All(c => c >= '0' && c <= '9' || c >= 'A' && c <= 'F') ? pidHash : null,
                 ExitTime = exitTime,
                 ExitCode = exitCode,
                 ParentPidHash = parentPidHash,
@@ -960,7 +1011,8 @@ namespace gov.llnl.wintap.core.infrastructure
             DateTime bestExit = DateTime.MaxValue;
             for (int i = 0; i < exits.Count; i++)
             {
-                if (exits[i].ExitTime >= createTime && exits[i].ExitTime < bestExit)
+                if ((exits[i].CanonicalPidHash == null || exits[i].CanonicalPidHash == pidHash) &&
+                    exits[i].ExitTime >= createTime && exits[i].ExitTime < bestExit)
                 {
                     bestIndex = i;
                     bestExit = exits[i].ExitTime;
@@ -1001,7 +1053,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
             RemoveActiveProcessCacheEntry(pid, pidHash);
 
-            WintapLogger.Log.Append(
+            LogRegistrationOrClear(
                 $"Applied pending Stop for PID {pid} to PidHash {escapedPidHash}",
                 LogLevel.Debug);
         }
@@ -1112,6 +1164,7 @@ namespace gov.llnl.wintap.core.infrastructure
         /// <returns>PidHash string, or null if no matching process found</returns>
         public string GetPidHash(int pid, DateTime createTime)
         {
+            if (TryResolveExitIdentityEvidence(pid, createTime, out var exitEvidence)) return exitEvidence.PidHash;
             try
             {
                 lock (_dbLock)
@@ -1926,7 +1979,7 @@ namespace gov.llnl.wintap.core.infrastructure
     /// </summary>
     public class ProcessRecord
     {
-        public enum ProcessSourceEnum { real_time, refresh }
+        public enum ProcessSourceEnum { real_time, refresh, exit_evidence }
         public ProcessRecord()
         {
             this.ParentPidHash = "";

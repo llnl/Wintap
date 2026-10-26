@@ -130,12 +130,15 @@ namespace gov.llnl.wintap
 #endif
             WintapLogger.Log.Append("Stop command received. Attempting to shutdown plugins",
                 LogLevel.Info);
+            AttributionTrace.RecordBoundary("service-stop-begin", "service");
 
             try
             {
                 // Stop health monitoring first: suppresses liveness stall alarms while
                 // components shut down and flushes the final window while the log is open.
+#if !LINUX
                 EventChannel.FlushPendingAttributionEvents();
+#endif
                 SensorHealthMonitor.Default.Stop();
 
                 // The shutdown registry marker is Windows-only. Attempting it
@@ -168,17 +171,47 @@ namespace gov.llnl.wintap
                 }
 
                 // Stop data collectors
+                AttributionTrace.RecordBoundary("collector-stop-begin", "service");
                 if (subscriptionMgr != null)
                 {
                     subscriptionMgr.Stop();
                 }
+                AttributionTrace.RecordBoundary("collector-stop-end", "service");
+
+#if LINUX
+                // Do not stop accepting attribution retries while data producers
+                // can still emit during their shutdown. All producer callbacks
+                // have now completed; use their final lifecycle evidence before
+                // draining Esper windows and serializers.
+                EventChannel.FlushPendingAttributionEvents();
+                AttributionTrace.RecordBoundary("attribution-final-flush-end", "service");
+#endif
+
+                // Experimental isolation: sender/retry draining is not equivalent
+                // to draining a live Esper time_batch/context. Current File/TCP/
+                // UDP aggregations use ten-second windows. Keep their subscribers
+                // alive for one full boundary after the last producer is stopped.
+                // Default shutdown behavior is unchanged pending cross-platform QA.
+                if (string.Equals(Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_DRAIN_BATCH_WINDOWS"),
+                    "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    WintapLogger.Log.Append("Experimental batch drain: producers stopped; awaiting 11s Esper boundary", LogLevel.Info);
+                    await Task.Delay(TimeSpan.FromSeconds(11));
+                    WintapLogger.Log.Append("Experimental batch drain: boundary wait complete; draining serializers", LogLevel.Info);
+                }
 
                 // All producers are now stopped. Drain serializer queues, wait
                 // for parquet finalization, then perform the final cache merge.
-                if (pluginMgr != null && !pluginMgr.ShutdownEtl())
+                bool requireShutdownBarrier = EtlShutdownBarrier.Enabled(OperatingSystem.IsLinux(),
+                    Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_ETL_SHUTDOWN_BARRIER"));
+                bool etlComplete = pluginMgr == null || (requireShutdownBarrier
+                    ? await pluginMgr.ShutdownEtlWithBarrierAsync(cancellationToken)
+                    : pluginMgr.ShutdownEtl());
+                if (!etlComplete)
                 {
                     WintapLogger.Log.Append("ETL shutdown did not fully drain before its timeout.", LogLevel.Warn);
                 }
+                AttributionTrace.RecordBoundary("etl-shutdown-end", "service", complete: etlComplete);
             }
             catch (Exception ex)
             {
@@ -186,6 +219,7 @@ namespace gov.llnl.wintap
             }
 
             WintapLogger.Log.Append("Shutdown complete.", LogLevel.Info);
+            AttributionTrace.Close();
             WintapLogger.Log.Close();
 
             await base.StopAsync(cancellationToken);
@@ -302,6 +336,25 @@ namespace gov.llnl.wintap
                 WintapLogger.Log.Append("Waiting for plugin initialization (5 seconds)...", LogLevel.Info);
                 await Task.Delay(5000);
 
+                bool requireEtlReady = EtlStartupReadiness.Enabled(OperatingSystem.IsLinux(),
+                    ConfigManager.GetValue<string>("WINTAP_EXPERIMENT_ETL_READINESS"));
+                RuntimeCapabilities.Setting("etlReadinessRequired", requireEtlReady, "startup-control");
+                if (requireEtlReady)
+                {
+                    AttributionTrace.RecordQuery("etl-readiness-wait", "service", null, null);
+                    try
+                    {
+                        await EtlStartupReadiness.RequireAsync(pluginMgr?.ETLReady, TimeSpan.FromSeconds(30));
+                        AttributionTrace.RecordQuery("etl-readiness-passed", "service", null, null);
+                        WintapLogger.Log.Append("ETL queries and callbacks ready before collector startup", LogLevel.Info);
+                    }
+                    catch (Exception ex)
+                    {
+                        AttributionTrace.RecordQuery("etl-readiness-blocked", "service", null, null, error: ex.ToString());
+                        throw;
+                    }
+                }
+
                 // ─── Collector Startup ─────────────────────────────────────────
                  string sensorsVal = ConfigManager.GetValue<string>("WINTAP_DISABLE_SENSORS");
                  bool sensorsDisabled = string.Equals(sensorsVal, "true", StringComparison.OrdinalIgnoreCase) ||
@@ -316,6 +369,7 @@ namespace gov.llnl.wintap
                 else try
                 {
                     WintapLogger.Log.Append($"Starting {Env.AppName} sensors", LogLevel.Info);
+                    AttributionTrace.RecordQuery("collector-start-call", "service", null, null);
                     subscriptionMgr = new SubscriptionManager();
                     subscriptionMgr.Start();
                     SensorHealthMonitor.Default.Start();

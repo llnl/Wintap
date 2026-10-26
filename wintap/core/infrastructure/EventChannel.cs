@@ -98,18 +98,30 @@ namespace gov.llnl.wintap.core.infrastructure
             try { AttributionRetryQueue.ParseStreams(streams); }
             catch (ArgumentException ex)
             {
-                WintapLogger.Log.Append($"{ex.Message}; using default Registry attribution retries", LogLevel.Warn);
+                WintapLogger.Log.Append($"{ex.Message}; using default attribution retry streams", LogLevel.Warn);
                 streams = null;
             }
+            int capacity = AttributionRetryQueue.DefaultCapacity;
+            try
+            {
+                capacity = AttributionRetryQueue.ExperimentalCapacity(
+                    Environment.GetEnvironmentVariable("WINTAP_EXPERIMENT_ATTRIBUTION_RETRY_CAPACITY"),
+                    OperatingSystem.IsLinux());
+            }
+            catch (ArgumentException ex) { WintapLogger.Log.Append(ex.Message + "; using default retry capacity", LogLevel.Warn); }
+            WintapLogger.Log.Append($"Attribution retry configuration: capacity={capacity},max_attempts={AttributionRetryQueue.MaxAttempts},interval_ms=1000,experimental_capacity={capacity != AttributionRetryQueue.DefaultCapacity}", LogLevel.Info);
             return new AttributionRetryQueue((message, attempt) => SendCore(message, false, out _, attempt),
+                capacity: capacity,
                 onError: ex => WintapLogger.Log.Append("Attribution retry failed: " + ex, LogLevel.Error),
-                enabledStreams: streams);
+                enabledStreams: streams, observer: AttributionTrace.QueueObserver);
         }
 
         internal static void FlushPendingAttributionEvents()
         {
             // Materialize and stop even if a concurrent first miss is creating the queue.
             attributionRetries.Value.Shutdown();
+            foreach (var d in attributionRetries.Value.SnapshotDiagnostics())
+                WintapLogger.Log.Append($"Attribution retry cumulative: stream={d.Stream},scheduled={d.Scheduled},capacity_refused={d.CapacityRefused},stopped_refused={d.StoppedRefused},exhausted={d.Exhausted},invoked={d.Invoked},callback_errors={d.CallbackErrors},shutdown_invoked={d.ShutdownInvoked},pending={d.Pending},high_water={d.HighWater}", LogLevel.Info);
         }
 
         private static readonly object compileDeployLock = new object();
@@ -294,15 +306,15 @@ namespace gov.llnl.wintap.core.infrastructure
                 }
             }
 
-            // Send to Esper (filter out Wintap's own events)
+            // Send to Esper; retain Linux collector lifecycle, not self-I/O feedback.
             try
             {
-                // Skip Wintap's own events
-                if (streamedEvent.PID == StateManager.WintapPID)
+                if (CollectorEventPolicy.ShouldSuppress(streamedEvent, StateManager.WintapPID, OperatingSystem.IsLinux()))
                 {
                     return;
                 }
 
+                AttributionTrace.Record(streamedEvent, "channel-enter", attributionRetryAttempt);
                 // Tag with AgentId
                 streamedEvent.AgentId = StateManager.AgentId.ToString();
 
@@ -315,6 +327,7 @@ namespace gov.llnl.wintap.core.infrastructure
                         timing.HealthTicks = Stopwatch.GetTimestamp() - directHealthStarted;
                     }
                     DirectParquetSink.Save(streamedEvent);
+                    AttributionTrace.Record(streamedEvent, "direct-sink-return", attributionRetryAttempt);
                     return;
                 }
                 long processResolveStarted = measure ? Stopwatch.GetTimestamp() : 0;
@@ -330,6 +343,7 @@ namespace gov.llnl.wintap.core.infrastructure
                         bool? fileCacheHit = null;
                         try
                         {
+                            AttributionTrace.Record(streamedEvent, "owner-lookup-begin", attributionRetryAttempt);
                             ownerProcess = EventOwnerSelection.ResolveOwner(
                                 _processResolver, streamedEvent, eventTimeUtc, OperatingSystem.IsWindows(), out fileCacheHit);
                         }
@@ -342,6 +356,7 @@ namespace gov.llnl.wintap.core.infrastructure
                                 Interlocked.Increment(ref _fileProcessCacheMisses);
                         }
 
+                        if (ownerProcess == null) AttributionTrace.Record(streamedEvent, "owner-miss", attributionRetryAttempt);
                         if (ownerProcess == null &&
                             attributionRetries.Value.TrySchedule(streamedEvent, attributionRetryAttempt))
                         {
@@ -354,14 +369,16 @@ namespace gov.llnl.wintap.core.infrastructure
                         {
                             streamedEvent.PidHash = ownerProcess.PidHash;
                             streamedEvent.ProcessName = ownerProcess.ProcessName;
+                            AttributionTrace.Record(streamedEvent, "owner-resolved", attributionRetryAttempt);
                         }
                         else
                         {
-                            // Generate a best-effort PidHash so events still have an identifier.
-                            // Prefer resolver lookup; fall back to a local hash when resolver has no record.
+                            // Never substitute event time for process-start time. An unresolved
+                            // owner gets the explicit unknown identity, not a fabricated instance.
                             var fallbackPidHash = _processResolver.GetPidHash(streamedEvent.PID, eventTimeUtc);
-                            streamedEvent.PidHash = fallbackPidHash ?? new ProcessHash().GenPidHash(streamedEvent.PID, streamedEvent.EventTime);
+                            streamedEvent.PidHash = fallbackPidHash ?? UnknownPidHash.Value;
                             streamedEvent.ProcessName = "Unknown";
+                            AttributionTrace.Record(streamedEvent, "owner-fallback", attributionRetryAttempt);
 
                             // Log only once per PID to avoid log floods.
                             if (_loggedMissingOwnerPid.TryAdd(streamedEvent.PID, 0))
@@ -463,7 +480,9 @@ namespace gov.llnl.wintap.core.infrastructure
                 {
                     if (!_skipProcessRegister)
                     {
+                        AttributionTrace.Record(streamedEvent, "register-call");
                         _processResolver.RegisterProcess(streamedEvent);
+                        AttributionTrace.Record(streamedEvent, "register-return");
                     }
                 }
 
@@ -481,12 +500,16 @@ namespace gov.llnl.wintap.core.infrastructure
 
                 if (_skipEsperSend)
                 {
+                    AttributionTrace.Record(streamedEvent, "esper-skipped", attributionRetryAttempt);
                     return;
                 }
 
                 // Send to Esper
                 long esperStarted = measure ? Stopwatch.GetTimestamp() : 0;
+                if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.TcpConnection)
+                    AttributionTrace.Record(streamedEvent, "tcp-esper-call", attributionRetryAttempt);
                 EsperRuntime.EventService.SendEventBean(streamedEvent, "WintapMessage");
+                AttributionTrace.Record(streamedEvent, "esper-return", attributionRetryAttempt);
                 if (measure)
                 {
                     timing.EsperTicks = Stopwatch.GetTimestamp() - esperStarted;
@@ -494,6 +517,7 @@ namespace gov.llnl.wintap.core.infrastructure
             }
             catch (Exception ex)
             {
+                AttributionTrace.Record(streamedEvent, "channel-error", attributionRetryAttempt);
                 WintapLogger.Log.Append(
                     $"Error sending event for {streamedEvent.MessageType}: {ex.ToString()}",
                     LogLevel.Error);
@@ -560,6 +584,14 @@ namespace gov.llnl.wintap.core.infrastructure
                 return true;
             }
 
+            if (_processResolver.TryResolveExitIdentityEvidence(streamedEvent.PID,
+                DateTime.FromFileTimeUtc(streamedEvent.EventTime), out ProcessRecord exitEvidence))
+            {
+                streamedEvent.PidHash = exitEvidence.PidHash;
+                streamedEvent.ProcessName = exitEvidence.ProcessName;
+                return true;
+            }
+
             // A lifecycle callback can lag its file/network callback. While the
             // producer is still alive, GetPidHash can derive the same stable hash
             // from /proc start time; waiting for retry instead loses this source
@@ -604,6 +636,10 @@ namespace gov.llnl.wintap.core.infrastructure
         {
             return _processResolver?.GetPidHash(pid, eventTime.ToUniversalTime());
         }
+
+        internal static bool RetainExitIdentityEvidence(WintapMessage stop, DateTime kernelStartUtc)
+            => !_skipProcessRegister && _processResolver != null &&
+                _processResolver.RetainExitIdentityEvidence(stop, kernelStartUtc);
 
         public static void ClearProcessDB()
         {

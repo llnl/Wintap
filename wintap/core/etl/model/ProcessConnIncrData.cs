@@ -15,6 +15,11 @@ namespace gov.llnl.wintap.core.etl.models
 
         public string PidHash { get; set; }
 
+        // Directed producer tuple provenance. Local/Remote ports are host-relative;
+        // these preserve direction even when one process owns both socket ends.
+        public int SourcePort { get; set; }
+        public int DestinationPort { get; set; }
+
         public long MinPacketSize { get; set; }
 
         public long MaxPacketSize { get; set; }

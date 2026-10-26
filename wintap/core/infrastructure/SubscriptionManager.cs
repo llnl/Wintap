@@ -114,8 +114,15 @@ namespace gov.llnl.wintap.core.infrastructure
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
 #if LINUX
-        // Stop linux collectors if needed
-        foreach (BaseSensor collector in linuxCollectors)
+        // File/network Stop can still emit while pollers/senders drain. Keep
+        // Linux process evidence alive through that phase, rather than stopping
+        // in startup order and creating shutdown-only attribution orphans.
+        foreach (BaseSensor collector in SensorShutdownOrder.DependentsBeforeIdentity(
+            linuxCollectors, collector =>
+                collector is gov.llnl.wintap.platform.linux.collect.ExecveSensor ||
+                collector is gov.llnl.wintap.platform.linux.collect.CloneSensor ||
+                collector is gov.llnl.wintap.platform.linux.collect.ExitSensor ||
+                collector is gov.llnl.wintap.platform.linux.collect.ProcessRundownSensor))
         {
             collector.Stop();
         }

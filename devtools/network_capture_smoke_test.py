@@ -5,7 +5,9 @@ Lintap/Wintap network-capture smoke test.
 This is intentionally an integration/smoke test rather than a narrow unit test:
 it generates a small amount of real outbound HTTP/HTTPS traffic, waits for the
 ETL parquet writer to flush, then queries the collected parquet data to confirm
-that outbound TCP connection records were captured.
+that outbound TCP connection records were captured. Normal ETL also confirms
+bidirectional endpoint normalization for separate-process and same-process socket
+ends over the host's non-loopback address (opt out with --no-verify-endpoints).
 
 Prerequisites:
   - Lintap/Wintap is already running.
@@ -450,7 +452,14 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=180, help="Maximum seconds to wait for parquet rows to appear.")
     parser.add_argument("--poll-interval", type=int, default=10, help="Seconds between parquet polling attempts.")
     parser.add_argument("--require-target-ip-match", action="store_true", help="Require a resolved endpoint IPv4 address to appear in captured rows. Disabled by default because CDNs/proxies can change target IPs.")
+    parser.add_argument("--verify-endpoints", action=argparse.BooleanOptionalAction, default=None, help="Require normalized bidirectional same-host/separate-PID and same-PID TCP endpoints; enabled by default for normal ETL, disabled for --start-lintap direct mode")
+    parser.add_argument("--host-ip", help="Assigned non-loopback host IPv4 address for --verify-endpoints")
     args = parser.parse_args()
+    if args.verify_endpoints is None:
+        args.verify_endpoints = not args.start_lintap
+    if args.start_lintap and args.verify_endpoints:
+        parser.error("--verify-endpoints requires normal ETL, not --start-lintap direct mode")
+    record(endpointChecksRequested=args.verify_endpoints)
 
     data_root: Path
     if args.data_root is not None:
@@ -491,12 +500,13 @@ def main() -> int:
         # Generate UDP test traffic as well (separate path). This sends small
         # UDP datagrams to DEFAULT_UDP_TARGETS to exercise UDP capture.
         udp_results = generate_udp_traffic(DEFAULT_UDP_TARGETS, args.rounds, args.request_timeout)
-        record(selectors=[dict(domain="network", case="network-suite", pids=[os.getpid()],
+        selectors = [dict(domain="network", case="network-suite", pids=[os.getpid()],
                                startedAtUtc=epoch_utc(start_epoch), completedAtUtc=utc_now(),
                                ports=sorted({probe.port for probe in probes} | {port for ip, port in DEFAULT_UDP_TARGETS}),
                                expectedProtocols=["tcp", "udp"],
                                targets=[dict(url=p.url, ips=sorted(p.resolved_ipv4), port=p.port,
-                                             requestOk=p.request_ok, error=p.request_error) for p in probes])])
+                                              requestOk=p.request_ok, error=p.request_error) for p in probes])]
+        record(selectors=selectors)
 
         summarize_expected_targets(probes)
 
@@ -524,7 +534,11 @@ def main() -> int:
                     last_rows = []
 
                 if last_rows:
-                    return validate(last_rows, probes, target_ports, args.require_target_ip_match, udp_ports)
+                    result = validate(last_rows, probes, target_ports, args.require_target_ip_match, udp_ports)
+                    if not result and args.verify_endpoints:
+                        from network_endpoint_smoke_test import run_checks
+                        return run_checks(parquet_root, args.timeout, args.poll_interval, args.host_ip, selectors)
+                    return result
 
             remaining = int(deadline - time.time())
             if remaining <= 0:

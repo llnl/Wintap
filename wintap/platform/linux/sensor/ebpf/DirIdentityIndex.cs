@@ -53,6 +53,22 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         public long TakeEvictions() => Interlocked.Exchange(ref _evictions, 0);
 
+        /// <summary>
+        /// Join unlink intent to its captured base, including after producer exit
+        /// or dirfd reuse. A missing/evicted base (including the fallback tracer's
+        /// zero identity) stays relative. Never consult a later process cwd/fd.
+        /// Learned directory aliases/renames remain an index limitation.
+        /// </summary>
+        public string ResolveUnlinkPath(uint ns, uint dev, ulong ino, string rawPath)
+        {
+            if (string.IsNullOrEmpty(rawPath) || rawPath[0] == '/') return rawPath;
+            if (ns == 0 || ino == 0 || Array.IndexOf(rawPath.Split('/'), "..") >= 0)
+                return rawPath; // Lexical parent reduction would misresolve symlinks.
+            if (!TryGet(ns, dev, ino, out string directory) ||
+                string.IsNullOrEmpty(directory) || directory[0] != '/') return rawPath;
+            return directory.TrimEnd('/') + "/" + rawPath;
+        }
+
         /// <summary>Lookup; a hit refreshes the entry's LRU position.</summary>
         public bool TryGet(uint ns, uint dev, ulong ino, out string path)
         {

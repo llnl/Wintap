@@ -19,7 +19,7 @@ This is preferred over older docs that assumed a standalone `/opt/lintap/Lintap`
 
 On the target Linux host, install:
 
-- .NET 8 runtime or SDK
+- ASP.NET Core runtime 10.0 for framework-dependent deployment; SDK **10.0.402** for builds
 - `libbpf`, `clang`, `llvm`, and kernel headers if building eBPF locally
 - root or `sudo` access for eBPF sensor loading
 
@@ -27,9 +27,14 @@ Example Ubuntu packages:
 
 ```bash
 sudo apt update
-sudo apt install -y dotnet-sdk-8.0 aspnetcore-runtime-8.0
+sudo apt install -y aspnetcore-runtime-10.0
 sudo apt install -y libbpf-dev libbpf1 clang llvm libelf-dev linux-headers-$(uname -r) build-essential
 ```
+
+For builds, select the exact SDK using
+[`../../Lintap/packaging/README.md`](../../Lintap/packaging/README.md#installselect-the-pinned-sdk).
+Do not assume `dotnet-sdk-10.0` supplies SDK 10.0.402. Self-contained packages do
+not require a system .NET runtime, but still require native OS dependencies.
 
 ## Build Lintap
 
@@ -50,13 +55,13 @@ make -C wintap/wintap run-env
 On shared mounts, the effective Linux output directory is typically:
 
 ```text
-/tmp/lintap-build/wintap/bin/Debug/net8.0
+/tmp/lintap-build/wintap/bin/Debug/net10.0
 ```
 
 On native filesystems, it is typically:
 
 ```text
-wintap/wintap/bin/Debug/net8.0
+wintap/wintap/bin/Debug/net10.0
 ```
 
 ## Copy Build Output
@@ -67,7 +72,7 @@ Example:
 
 ```bash
 sudo mkdir -p /opt/lintap
-sudo rsync -a /tmp/lintap-build/wintap/bin/Debug/net8.0/ /opt/lintap/
+sudo rsync -a /tmp/lintap-build/wintap/bin/Debug/net10.0/ /opt/lintap/
 ```
 
 If your build output is in the repo tree instead of `/tmp`, copy that directory instead.

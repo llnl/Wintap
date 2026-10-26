@@ -28,13 +28,13 @@ namespace Wintap.Tests
   {
    Assert.Null(FileSensor.CreateFileMessage(path, 1, DateTime.UtcNow, WintapMessage.ActivityTypeEnum.Write, 0, null, null, _ => throw new Exception()));
   }
-  [Fact] public void SerializerKeepsWindowsValueAndExistingOtherPlatformBehavior()
+  [Fact] public void SerializerPreservesProducerPathOnEveryPlatform()
   {
    var old = CultureInfo.CurrentCulture;
    try { foreach (string culture in new[] { "en-US", "tr-TR" }) {
     CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
     foreach (string path in new[] { @"c:\file", @"\device\harddiskvolumeshadowcopy20\$mft", @"c:\I" }) {
-     Assert.Same(path, FileSerializer.SelectPath(path, true)); Assert.Equal(path.ToLower(), FileSerializer.SelectPath(path, false));
+     Assert.Same(path, FileSerializer.SelectPath(path, true)); Assert.Same(path, FileSerializer.SelectPath(path, false));
     }
    }} finally { CultureInfo.CurrentCulture = old; }
   }

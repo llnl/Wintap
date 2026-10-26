@@ -14,6 +14,9 @@
 
   <!-- 2026-10-22: BouncyCastle (was 2.7.0-beta.98, used only for MD5Digest) removed; ProcessHash.cs now uses System.Security.Cryptography.MD5 -->
   <ItemGroup>
+    <!-- Compile the same identity sources as the sensor; never copy the formula. -->
+    <Compile Include="..\..\..\wintap\core\shared\ProcessIdentity.cs" Link="Identity\ProcessIdentity.cs" />
+    <Compile Include="..\..\..\wintap\core\shared\AgentIdentity.cs" Link="Identity\AgentIdentity.cs" />
     <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
     <PackageReference Include="Newtonsoft.Json" />

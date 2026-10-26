@@ -1485,7 +1485,8 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             else
             {
                 Interlocked.Increment(ref stopWithoutStartCount);
-                pidHash = genPidHash(pid, stopTimeUtc.ToFileTimeUtc());
+                // Stop time is not process-start time; expose missing identity explicitly.
+                pidHash = genPidHash(-1, 0);
                 parentPidHash = string.Empty;
                 parentPid = 0;
                 processName = imageFileName ?? string.Empty;
