@@ -205,6 +205,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                 bool contractV2 = LoadedTier == "core" &&
                     LibBpf.bpf_object__find_map_by_name(BpfObject, "udp_sendmsg_ctx_map") != IntPtr.Zero;
                 RuntimeCapabilities.Feature(CapabilityKey, "networkContractVersion", contractV2 ? 2 : 0);
+                bool tcpTupleV1 = LoadedTier == "core" &&
+                    LibBpf.bpf_object__find_map_by_name(BpfObject, "tcp_tuple_v1") != IntPtr.Zero;
+                RuntimeCapabilities.Feature(CapabilityKey, "tcpTupleContractVersion", tcpTupleV1 ? 1 : 0);
+                RuntimeCapabilities.Feature(CapabilityKey, "tcpTupleLifecycleHooksAttached", tcpTupleV1 &&
+                    attachedPrograms.Contains("kprobe__tcp_v4_connect") && attachedPrograms.Contains("kretprobe__tcp_v4_connect") &&
+                    attachedPrograms.Contains("kprobe__tcp_close") && attachedPrograms.Contains("kretprobe__inet_csk_accept") &&
+                    attachedPrograms.Contains("kprobe__tcp_sendmsg") && attachedPrograms.Contains("kprobe__tcp_recvmsg"));
                 if (contractV2)
                 {
                     RuntimeCapabilities.Feature(CapabilityKey, "tcpAcceptReturnAttached", attachedPrograms.Contains("kretprobe__inet_csk_accept"));

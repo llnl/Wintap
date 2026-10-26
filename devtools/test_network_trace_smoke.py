@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from network_trace_smoke_test import check_rows
+from network_trace_smoke_test import check_rows, check_tcp_lifecycle
 
 
 class NetworkTraceTests(unittest.TestCase):
@@ -31,6 +31,15 @@ class NetworkTraceTests(unittest.TestCase):
     def test_operation_does_not_waive_wrong_protocol(self):
         row = self.row(); row['protocol'] = '6'
         self.assertTrue(check_rows([row], self.expected()))
+
+    def test_tcp_oracle_rejects_missing_eof_and_partial_or_duplicate_extras(self):
+        row = self.row(operation=4, size=1)
+        row['protocol'] = '6'
+        expected = self.expected(operation=4, size=1)
+        self.assertFalse(check_tcp_lifecycle([row], expected))
+        self.assertTrue(check_tcp_lifecycle([], expected))
+        self.assertTrue(check_tcp_lifecycle([row, row], expected))
+        self.assertTrue(check_tcp_lifecycle([dict(row, destination_port='0')], expected))
 
     def test_current_source_has_success_and_pointer_domain_guards(self):
         source = (Path(__file__).parents[1] / 'wintap/platform/linux/sensor/ebpf/tracers/network_ops_tracer.bpf.c').read_text()

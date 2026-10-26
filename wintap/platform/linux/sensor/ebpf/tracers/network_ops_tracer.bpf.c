@@ -153,6 +153,16 @@ struct {
     __uint(max_entries, 16384);
 } conn_map SEC(".maps");
 
+// Object capability marker: complete TCP tuples survive state transitions;
+// sampling clocks are not reset, and state callbacks cannot resurrect a closed
+// socket's cache entry. The managed receipt still requires object-hash proof.
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, __u32);
+    __uint(max_entries, 1);
+} tcp_tuple_v1 SEC(".maps");
+
 // Per-socket rate limiting for UDP send/recv probes to avoid event floods.
 struct udp_rate {
     __u64 last_send_ns;
@@ -283,7 +293,7 @@ int trace_inet_sock_set_state(struct inet_sock_set_state_args *ctx)
 
     // NOTE: On some RHEL8 kernels, the inet_sock_set_state tracepoint's
     // old/new state fields don't reliably match the TCP_* constants. We keep
-    // this tracepoint purely for populating conn_map (tuple cache), and emit
+    // this tracepoint purely for refreshing conn_map (tuple cache), and emit
     // TcpIpConnect/TcpIpDisconnect from tcp_v4_connect kretprobes / tcp_close
     // kprobes instead.
     __u8 op_type = 0;
@@ -332,19 +342,17 @@ int trace_inet_sock_set_state(struct inet_sock_set_state_args *ctx)
     __u16 sport = BPF_CORE_READ(sock, __sk_common.skc_num);
     __u16 dport = bpf_ntohs(BPF_CORE_READ(sock, __sk_common.skc_dport));
 
-    // Store a copy of the connection tuple keyed by socket pointer so other
-    // kprobe-based handlers can later lookup addresses without reading
-    // kernel struct fields. This is used for:
-    // - TCP send/recv
-    // - UDP send/recv for connected UDP sockets (connect+sendmsg/recvmsg)
-    struct conn_info cinfo = {};
-    cinfo.saddr = saddr;
-    cinfo.daddr = daddr;
-    cinfo.sport = sport;
-    cinfo.dport = dport;
-    cinfo.start_ns = bpf_ktime_get_ns();
-    __u64 sk_key_for_store = (__u64)sk;
-    bpf_map_update_elem(&conn_map, &sk_key_for_store, &cinfo, BPF_ANY);
+    // TCP teardown can clear skc_num before this callback. Never replace a
+    // learned complete tuple with that partial live snapshot, nor reset sample
+    // clocks on FIN/state transitions. Connect/accept/data own cache creation;
+    // a callback after tcp_close deletion must not resurrect the pointer key.
+    struct conn_info *ci = bpf_map_lookup_elem(&conn_map, &sk_key);
+    if (ci && saddr && daddr && sport && dport) {
+        ci->saddr = saddr;
+        ci->daddr = daddr;
+        ci->sport = sport;
+        ci->dport = dport;
+    }
 
     return 0;
 }
@@ -407,6 +415,9 @@ int kprobe__tcp_v4_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -457,6 +468,9 @@ int kprobe__tcp_v6_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -506,6 +520,9 @@ int kprobe__tcp_connect(struct pt_regs *ctx)
     if (!sk)
         return 0;
 
+    __u64 fresh_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &fresh_key);
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u64 sk_key_tmp = (__u64)sk;
     bpf_map_update_elem(&tcp_connect_sk_map, &pid_tgid, &sk_key_tmp, BPF_ANY);
@@ -554,9 +571,13 @@ int kprobe__tcp_close(struct pt_regs *ctx)
         return 0;
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = (__u32)(pid_tgid >> 32);
-    if (!pid_allowed(pid))
-        return 0;
-    emit_tcp_disconnect_event(pid, sk);
+    if (pid_allowed(pid))
+        emit_tcp_disconnect_event(pid, sk);
+    // A different thread/process may close a shared socket. Cleanup must not
+    // depend on the current task matching the optional capture filter.
+    __u64 sk_key = (__u64)sk;
+    bpf_map_delete_elem(&conn_map, &sk_key);
+    bpf_map_delete_elem(&sock_pid_map, &sk_key);
     return 0;
 }
 
@@ -609,10 +630,9 @@ int kprobe__tcp_sendmsg(struct pt_regs *ctx)
         return 0;
     __u64 len = (__u64)PT_REGS_PARM3(ctx);
 
-    // Prefer connection tuple from conn_map (populated by
-    // trace_inet_sock_set_state). However, on some kernels the tracepoint
-    // argument layout differs enough that saddr/daddr may stay zero. For data
-    // quality, fall back to reading from `struct sock`.
+    // Prefer the connection tuple learned by connect/accept/data and refreshed
+    // by state callbacks. If capture began mid-connection or the cache is absent,
+    // fall back to live `struct sock` fields without guessing missing endpoints.
     __u64 sk_key = (__u64)sk;
     __u64 now = bpf_ktime_get_ns();
     struct conn_info *ci = bpf_map_lookup_elem(&conn_map, &sk_key);

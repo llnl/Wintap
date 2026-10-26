@@ -7,6 +7,7 @@ Raw traces, endpoint selectors and summaries stay in a fresh VM-local output dir
 """
 import argparse
 import csv
+from collections import Counter
 import ctypes
 import hashlib
 import json
@@ -162,6 +163,50 @@ def turnover_stimulus():
     return expected
 
 
+def tcp_lifecycle_stimulus():
+    """Data, half-close, sampled EOF and delayed EOF with exact socket roles."""
+    expected = []
+    with socket.socket() as listener, socket.socket() as client:
+        listener.bind(('127.0.0.1', 0)); listener.listen(1); listener.settimeout(2)
+        client.settimeout(2); client.connect(listener.getsockname())
+        server, _ = listener.accept()
+        with server:
+            server.settimeout(2)
+            c, s = client.getsockname(), server.getsockname()
+            expected.extend([('Accept', 2, c, s, 0)])
+            client.sendall(b'hello'); assert server.recv(5) == b'hello'
+            server.sendall(b'world'); assert client.recv(5) == b'world'
+            expected.extend([('client Send', 3, c, s, 5), ('server Receive', 4, c, s, 5),
+                             ('server Send', 3, s, c, 5), ('client Receive', 4, s, c, 5)])
+            # State transitions must not reset the per-direction sample clock.
+            server.shutdown(socket.SHUT_WR); client.shutdown(socket.SHUT_WR)
+            assert client.recv(1) == b''; assert server.recv(1) == b''
+            time.sleep(1.1)
+            # EOF is still an entry request of one byte, not one received byte.
+            assert client.recv(1) == b''; assert server.recv(1) == b''
+            expected.extend([('delayed client EOF request', 4, s, c, 1),
+                             ('delayed server EOF request', 4, c, s, 1),
+                             ('server Disconnect', 5, s, c, 0), ('client Disconnect', 5, c, s, 0)])
+        # Listener close has no peer by definition; assert its own separate tuple.
+        expected.append(('listener Close', 5, s, ('0.0.0.0', 0), 0))
+    return expected
+
+
+def check_tcp_lifecycle(rows, expected):
+    def key(operation, source, destination, size):
+        return (int(operation), source[0], int(source[1]), destination[0], int(destination[1]), int(size))
+    wanted = Counter(key(op, src, dst, size) for _, op, src, dst, size in expected)
+    # Connection-entry duplicates are a separate pre-existing contract; all
+    # Accept/Send/Recv/Close rows, including partial extra rows, are strict here.
+    got = Counter(key(r['operation'], (r['source'], r['source_port']),
+        (r['destination'], r['destination_port']), r['bytes']) for r in rows if int(r['operation']) != 1)
+    failures = []
+    if any(int(r['protocol']) != 6 for r in rows): failures.append('unexpected protocol')
+    if wanted - got: failures.append('missing/wrong TCP lifecycle observations')
+    if got - wanted: failures.append('extra/duplicate/partial TCP lifecycle observations')
+    return failures
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--runner', required=True, type=Path)
@@ -169,7 +214,9 @@ def main():
     p.add_argument('--output', required=True, type=Path)
     p.add_argument('--baseline', action='store_true', help='Compare an old object; missing new send-return map/hook allowed, checks remain strict')
     p.add_argument('--turnover', action='store_true', help='24 rapid socket lifetimes; connected repeats must remain sampled')
+    p.add_argument('--tcp-lifecycle', action='store_true', help='Strict half-close/EOF/close tuple and sampling regression')
     args = p.parse_args()
+    if args.turnover and args.tcp_lifecycle: p.error('Select one qualification workload')
     args.output.mkdir(parents=True, exist_ok=False)
     ready, trace = args.output / 'ready', args.output / 'trace.csv'
     with (args.output / 'runner.log').open('w') as log:
@@ -187,7 +234,7 @@ def main():
                 if proc.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError('Actual-object runner did not reach attached readiness')
                 time.sleep(.05)
-            expected = turnover_stimulus() if args.turnover else stimulus()
+            expected = tcp_lifecycle_stimulus() if args.tcp_lifecycle else turnover_stimulus() if args.turnover else stimulus()
             rc = proc.wait(timeout=30)
             if rc: raise RuntimeError(f'Runner failed/unclean context maps: {rc}')
         finally:
@@ -196,10 +243,10 @@ def main():
                 proc.wait(timeout=30)
     rows = list(csv.DictReader(trace.open()))
     rows = [r for r in rows if int(r['pid']) == os.getpid()]
-    failures = check_rows(rows, expected)
+    failures = check_tcp_lifecycle(rows, expected) if args.tcp_lifecycle else check_rows(rows, expected)
     result = dict(scope='actual CO-RE object only; not managed/ETL/package acceptance',
         object_sha256=hashlib.sha256(args.object.read_bytes()).hexdigest(),
-        checks=len(expected), mode='turnover' if args.turnover else 'return-matrix',
+        checks=len(expected), mode='tcp-lifecycle' if args.tcp_lifecycle else 'turnover' if args.turnover else 'return-matrix',
         failures=failures, passed=not failures)
     (args.output / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: v for k, v in result.items() if k != 'object_sha256'}))

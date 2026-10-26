@@ -46,6 +46,7 @@ static int event(void *ctx, void *data, size_t size) {
 static int required(const char *name) {
     if (baseline && !strcmp(name, "kretprobe__udp_sendmsg")) return 0;
     const char *names[] = {"trace_inet_sock_set_state", "kretprobe__inet_csk_accept",
+        "kprobe__tcp_v4_connect", "kretprobe__tcp_v4_connect",
         "kprobe__tcp_sendmsg", "kprobe__tcp_recvmsg", "kprobe__tcp_close",
         "kprobe__udp_sendmsg", "kretprobe__udp_sendmsg", "kprobe__udp_recvmsg",
         "kretprobe__udp_recvmsg"};
@@ -90,7 +91,7 @@ int main(int argc, char **argv) {
             found += required(name);
         }
     }
-    if (found != (baseline ? 8 : 9)) goto cleanup;
+    if (found != (baseline ? 10 : 11)) goto cleanup;
     output = fopen(argv[2], "wx");
     if (!output) goto cleanup;
     fprintf(output, "pid,time_ns,protocol,operation,source,source_port,destination,destination_port,bytes\n");
@@ -113,6 +114,16 @@ int main(int argc, char **argv) {
         int rc = fd < 0 ? -1 : bpf_map_get_next_key(fd, NULL, &next);
         fprintf(stderr, "context-map %s empty=%d\n", maps[i], rc < 0 && errno == ENOENT);
         if (fd < 0 || rc == 0 || errno != ENOENT) status = 5;
+    }
+    if (bpf_object__find_map_fd_by_name(obj, "tcp_tuple_v1") >= 0) {
+        const char *tcp_maps[] = {"conn_map", "sock_pid_map"};
+        for (size_t i = 0; i < sizeof(tcp_maps)/sizeof(tcp_maps[0]); i++) {
+            uint64_t next;
+            fd = bpf_object__find_map_fd_by_name(obj, tcp_maps[i]);
+            int rc = fd < 0 ? -1 : bpf_map_get_next_key(fd, NULL, &next);
+            fprintf(stderr, "closed-socket-map %s empty=%d\n", tcp_maps[i], rc < 0 && errno == ENOENT);
+            if (fd < 0 || rc == 0 || errno != ENOENT) status = 5;
+        }
     }
 cleanup:
     ring_buffer__free(ring);

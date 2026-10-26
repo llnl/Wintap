@@ -21,6 +21,16 @@ timing plus an outer GNU timeout including attachment/cleanup. This observer is
 not a recurring/field canary. Named file stimuli now include coexisting case-only
 names and learned-cwd unlink, with exact per-path activities.
 
+`network_trace_smoke_test.py --tcp-lifecycle` adds10 strict observations spanning
+bidirectional data, half-close, immediate sampled EOF, delayed EOF requests and
+both connected-socket closes. Delayed EOF still requests one byte but returns zero;
+TCP telemetry retains requested-at-entry byte semantics. The listener's peerless
+close is a separate explicit expectation. Extra partial/duplicate Send/Recv/Close
+rows fail. New-object runs also require empty conn_map/sock_pid_map after closure.
+The managed receipt advertises `tcpTupleContractVersion: 1` only for a core object
+with the `tcp_tuple_v1` map marker; trusted object hashes and attached lifecycle
+hooks remain required. This is separate from UDP's `networkContractVersion: 2`.
+
 ## Experimental short-lived attribution A/B rounds
 
 `attribution_experiment.py` copies the installed package and a candidate build into
