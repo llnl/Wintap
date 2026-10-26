@@ -120,17 +120,63 @@ def stimulus():
     return expected
 
 
+def turnover_stimulus():
+    """Small sequential loop, not pressure: first sample in each new lifetime.
+
+    Connected sockets repeat within one second to check intentional sampling;
+    no pause between lifetimes masks inherited pointer-keyed sample state.
+    """
+    expected, tuples = [], set()
+    start = time.monotonic()
+    for index in range(24):
+        connected = index % 2 == 0
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+            sender.bind(('127.0.0.1', 0)); receiver.bind(('127.0.0.1', 0))
+            src, dest = sender.getsockname(), receiver.getsockname()
+            assert (src, dest) not in tuples, 'ephemeral tuple reused; repeat qualification'
+            tuples.add((src, dest))
+            if connected:
+                sender.connect(dest); receiver.connect(src)
+            receiver.setblocking(False)
+            try:
+                receiver.recv(32)
+                raise AssertionError('empty receive unexpectedly succeeded')
+            except BlockingIOError:
+                pass
+            try:
+                sender.sendto(b'x' * 65508, dest)
+                raise AssertionError('oversize send unexpectedly succeeded')
+            except OSError:
+                pass
+            receiver.settimeout(1)
+            begun = time.monotonic()
+            for repeat in range(2 if connected else 1):
+                payload = b'first' if repeat == 0 else b'sampled'
+                assert sender.sendto(payload, dest) == len(payload)
+                data = receiver.recv(32) if connected else receiver.recvfrom(32)[0]
+                assert data == payload
+            assert time.monotonic() - begun < .9, 'sampling interval crossed; repeat qualification'
+            expected.extend([(f'lifetime-{index} Send', 6, src, dest, 5),
+                             (f'lifetime-{index} Receive', 7, src, dest, 5)])
+    assert time.monotonic() - start < 5, 'turnover workload exceeded bound'
+    return expected
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--runner', required=True, type=Path)
     p.add_argument('--object', required=True, type=Path)
     p.add_argument('--output', required=True, type=Path)
     p.add_argument('--baseline', action='store_true', help='Compare an old object; missing new send-return map/hook allowed, checks remain strict')
+    p.add_argument('--turnover', action='store_true', help='24 rapid socket lifetimes; connected repeats must remain sampled')
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     ready, trace = args.output / 'ready', args.output / 'trace.csv'
     with (args.output / 'runner.log').open('w') as log:
-        command = ['sudo', '-n', str(args.runner.resolve()), str(args.object.resolve()),
+        # Outer deadline includes load/attachment/cleanup, with forced teardown
+        # if graceful exit stalls. timeout closes only this observer's links.
+        command = ['sudo', '-n', 'timeout', '--signal=TERM', '--kill-after=2s', '25s',
+            str(args.runner.resolve()), str(args.object.resolve()),
             str(trace.resolve()), str(ready.resolve()), str(os.getpid()), '20']
         if args.baseline:
             command.append('--baseline')
@@ -141,19 +187,20 @@ def main():
                 if proc.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError('Actual-object runner did not reach attached readiness')
                 time.sleep(.05)
-            expected = stimulus()
-            rc = proc.wait(timeout=25)
+            expected = turnover_stimulus() if args.turnover else stimulus()
+            rc = proc.wait(timeout=30)
             if rc: raise RuntimeError(f'Runner failed/unclean context maps: {rc}')
         finally:
             if proc.poll() is None:
                 # Runner has its own bound; do not kill unrelated processes.
-                proc.wait(timeout=25)
+                proc.wait(timeout=30)
     rows = list(csv.DictReader(trace.open()))
     rows = [r for r in rows if int(r['pid']) == os.getpid()]
     failures = check_rows(rows, expected)
     result = dict(scope='actual CO-RE object only; not managed/ETL/package acceptance',
         object_sha256=hashlib.sha256(args.object.read_bytes()).hexdigest(),
-        checks=len(expected), failures=failures, passed=not failures)
+        checks=len(expected), mode='turnover' if args.turnover else 'return-matrix',
+        failures=failures, passed=not failures)
     (args.output / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: v for k, v in result.items() if k != 'object_sha256'}))
     return bool(failures)

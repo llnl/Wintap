@@ -27,6 +27,10 @@ class TelemetryWorkloadTests(unittest.TestCase):
             self.assertTrue(all(s['endpointExpectations'][0]['protocol'] == 'udp' for s in udp))
             files = [s for s in portable['selectors'] if s['domain'] == 'file']
             self.assertTrue(all(s['pathExpectations'] for s in files))
+            paths = {Path(p['path']).name: set(p['expectedActivities']) for s in files for p in s['pathExpectations']}
+            for name in ('CaseOnly.bin', 'caseonly.bin', 'relative.bin'):
+                self.assertEqual(paths[name], {'Open', 'Read', 'Write', 'Close', 'Delete'})
+            self.assertIn('Delete', paths['cwd.bin'])
             self.assertTrue(portable["host"]["hostname"])
             self.assertTrue(manifest["stimulusOnly"])
             generated = {row["case"] for row in manifest["cases"] if row["status"] == "generated"}

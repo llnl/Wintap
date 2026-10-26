@@ -2,6 +2,25 @@
 
 This directory contains small utilities for validating and troubleshooting Wintap, Mactap, and Lintap deployments.
 
+## Corrected telemetry bundle: Ubuntu and later RHEL 9
+
+`verify_rpm_payload.py --rpm PATH --rpm-sha256 TRUSTED_SHA256` is a read-only native
+RHEL9/x86_64 post-install check. It compares installed regular non-config payload
+files to an independently reviewed RPM and emits core-object/managed hashes. It
+never installs, controls services, reads config contents or attaches tracers. Native
+build provenance (SDK10.0.402, managed and all eBPF objects) remains required.
+Use Analytics `validation/telemetry-soak/validate-round.py` after normal evidence
+delivery for receipt/hash/projection checks and shared dashboard evaluation.
+Procedure: `../Wintap-Analytics/wiki/work/wintap-telemetry-identity-and-data-quality/rhel9_validation.md`.
+
+The idle-VM-only `network_trace_smoke_test.py --turnover` uses24 rapid socket
+lifetimes, failures before success, and connected repeats within the sampling
+interval. It keeps48 strict expected observations; it does not guarantee pointer
+reuse. Default mode retains the15-check return matrix. The observer uses monotonic
+timing plus an outer GNU timeout including attachment/cleanup. This observer is
+not a recurring/field canary. Named file stimuli now include coexisting case-only
+names and learned-cwd unlink, with exact per-path activities.
+
 ## Experimental short-lived attribution A/B rounds
 
 `attribution_experiment.py` copies the installed package and a candidate build into

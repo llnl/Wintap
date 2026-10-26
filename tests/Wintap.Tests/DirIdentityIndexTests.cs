@@ -6,6 +6,32 @@ namespace Wintap.Tests
     public class DirIdentityIndexTests
     {
         [Fact]
+        public void UnlinkUsesCapturedBaseAfterFdReuseOrProducerExit()
+        {
+            var index = new DirIdentityIndex(16);
+            index.Put(1, 10, 100, "/fixture/Old");
+            index.Put(1, 10, 200, "/fixture/new");
+            // Same process/fd could now refer to 200, or no longer exist.
+            // Neither is an input to resolution of the earlier event.
+            Assert.Equal("/fixture/Old/Case.bin", index.ResolveUnlinkPath(1, 10, 100, "Case.bin"));
+            Assert.Equal("/fixture/new/Case.bin", index.ResolveUnlinkPath(1, 10, 200, "Case.bin"));
+            Assert.Equal("/absolute/Case.bin", index.ResolveUnlinkPath(0, 0, 0, "/absolute/Case.bin"));
+        }
+
+        [Fact]
+        public void UnlinkUnknownNamespaceEvictionAndParentTraversalStayRelative()
+        {
+            var index = new DirIdentityIndex(1);
+            index.Put(1, 10, 100, "/fixture/Old");
+            Assert.Equal("Case.bin", index.ResolveUnlinkPath(2, 10, 100, "Case.bin"));
+            Assert.Equal("../Case.bin", index.ResolveUnlinkPath(1, 10, 100, "../Case.bin"));
+            Assert.Equal("Case.bin", index.ResolveUnlinkPath(0, 0, 0, "Case.bin"));
+            index.Put(1, 10, 200, "/fixture/new");
+            Assert.Equal("Case.bin", index.ResolveUnlinkPath(1, 10, 100, "Case.bin"));
+            Assert.Null(index.ResolveUnlinkPath(1, 10, 200, null));
+        }
+
+        [Fact]
         public void PutThenGet_ReturnsPath()
         {
             var index = new DirIdentityIndex(16);

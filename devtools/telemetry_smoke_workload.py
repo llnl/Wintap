@@ -106,6 +106,39 @@ def files(root, case):
     finally:
         os.close(dirfd)
 
+    # Coexisting case-only names exercise the real serializer/key projection.
+    # Each receives independent exact-path assertions in the manifest.
+    for name in ('CaseOnly.bin', 'caseonly.bin'):
+        exact = directory / name
+        fd = os.open(exact, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        try:
+            assert os.write(fd, b'case-pair') == 9
+            os.lseek(fd, 0, os.SEEK_SET)
+            assert os.read(fd, 9) == b'case-pair'
+        finally:
+            os.close(fd)
+        emit(root, case, 'case-only-open-write-read-close', path=str(exact),
+             expectedActivities=['Open', 'Write', 'Read', 'Close'])
+    for name in ('CaseOnly.bin', 'caseonly.bin'):
+        exact = directory / name
+        exact.unlink()
+        emit(root, case, 'case-only-unlink', path=str(exact), expectedActivity='Delete')
+
+    # Learned cwd identity survives a subsequent cwd change/worker exit. This
+    # worker is isolated; no collector or parent process directory is changed.
+    old_cwd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+    base = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fchdir(base)
+        fd = os.open('cwd.bin', os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        os.close(fd)
+        os.unlink('cwd.bin')
+        emit(root, case, 'cwd-unlink', path=str(directory / 'cwd.bin'), expectedActivity='Delete')
+    finally:
+        os.fchdir(old_cwd)
+        os.close(base)
+        os.close(old_cwd)
+
 
 def receive_exact(sock, expected):
     received = b""

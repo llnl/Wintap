@@ -25,6 +25,11 @@ static volatile sig_atomic_t stopped;
 static FILE *output;
 static int baseline;
 static void stop(int sig) { (void)sig; stopped = 1; }
+static double monotonic_seconds(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) return -1;
+    return now.tv_sec + now.tv_nsec / 1e9;
+}
 static int event(void *ctx, void *data, size_t size) {
     (void)ctx;
     if (size != sizeof(struct network_event)) return 0;
@@ -57,6 +62,10 @@ int main(int argc, char **argv) {
     unsigned pid = (unsigned)strtoul(argv[4], NULL, 10);
     int seconds = atoi(argv[5]);
     if (!pid || seconds < 1 || seconds > 120) return 2;
+    signal(SIGINT, stop); signal(SIGTERM, stop);
+    double start = monotonic_seconds();
+    if (start < 0) return 2;
+    double until = start + seconds;
     struct bpf_object *obj = bpf_object__open_file(argv[1], NULL);
     if (libbpf_get_error(obj)) return 3;
     int status = 3;
@@ -69,6 +78,7 @@ int main(int argc, char **argv) {
     if (fd < 0 || bpf_map_update_elem(fd, &key, &pid, BPF_ANY)) goto cleanup;
     struct bpf_program *prog;
     bpf_object__for_each_program(prog, obj) {
+        if (stopped || monotonic_seconds() >= until) goto cleanup;
         const char *name = bpf_program__name(prog);
         if (count == 64) goto cleanup;
         struct bpf_link *link = bpf_program__attach(prog);
@@ -91,9 +101,7 @@ int main(int argc, char **argv) {
     if (!ready) goto cleanup;
     fputs("attached\n", ready);
     fclose(ready);
-    signal(SIGINT, stop); signal(SIGTERM, stop);
-    time_t until = time(NULL) + seconds;
-    while (!stopped && time(NULL) < until) {
+    while (!stopped && monotonic_seconds() < until) {
         int rc = ring_buffer__poll(ring, 100);
         if (rc < 0 && rc != -EINTR) goto cleanup;
     }

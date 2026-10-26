@@ -547,7 +547,7 @@ int t_unlinkat(struct unlinkat_args *ctx)
         return 0;
     if (should_drop_user_pseudo_path(ctx->pathname, FILE_OP_UNLINK))
         return 0;
-    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, 0);
+    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, ctx->dfd);
     return 0;
 }
 
@@ -566,7 +566,7 @@ int t_unlink(struct unlink_args *ctx)
         return 0;
     if (should_drop_user_pseudo_path(ctx->pathname, FILE_OP_UNLINK))
         return 0;
-    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, 0);
+    emit_file_event_user(pid, ctx->pathname, 0, 0, FILE_OP_UNLINK, AT_FDCWD);
     return 0;
 }
 

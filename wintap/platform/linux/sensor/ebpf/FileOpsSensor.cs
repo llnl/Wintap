@@ -358,6 +358,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                 {
                     filePath = ResolveOpenPath(pid, fd, dirfd, mntNs, dirDev, dirIno, filePath);
                 }
+                else if (isPathRecord && opType == FileOpUnlink)
+                {
+                    filePath = _dirIdentityIndex.ResolveUnlinkPath(mntNs, dirDev, dirIno, filePath);
+                }
                 
                 // Resolve file path for FD-based operations (read/write/close/mmap)
                 if (string.IsNullOrEmpty(filePath))
