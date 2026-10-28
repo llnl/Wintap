@@ -322,12 +322,16 @@ namespace gov.llnl.wintap.core.infrastructure
                 streamedEvent.AgentId = StateManager.AgentId.ToString();
 
                 bool requiresVerifiedLifetime = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.WindowsShell;
+                // PowerShell uses the emitting ETW PID and the normal event-time
+                // owner policy, including when the diagnostic direct sink is used.
+                bool requiresOwnerLookup = requiresVerifiedLifetime ||
+                    streamedEvent.MessageType == WintapMessage.MessageTypeEnum.PowerShell;
                 bool ownerVerified = false;
                 long processResolveStarted = measure ? Stopwatch.GetTimestamp() : 0;
                 DateTime eventTimeUtc = DateTime.FromFileTimeUtc(streamedEvent.EventTime);
 
                 // Resolve process information using platform-specific resolver
-                if (_processResolver != null && !_skipProcessResolve && (!_directParquetEnabled || requiresVerifiedLifetime))
+                if (_processResolver != null && !_skipProcessResolve && (!_directParquetEnabled || requiresOwnerLookup))
                 {
                     if (streamedEvent.MessageType != WintapMessage.MessageTypeEnum.Process)
                     {
