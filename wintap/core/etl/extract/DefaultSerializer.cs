@@ -9,7 +9,6 @@ using com.espertech.esper.common.client;
 using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.etl.models;
 using gov.llnl.wintap.core.infrastructure;
-using gov.llnl.wintap.core.infrastructure;
 using System;
 using System.Dynamic;
 using static gov.llnl.wintap.collect.models.WintapMessage;
@@ -31,40 +30,7 @@ namespace gov.llnl.wintap.core.etl.extract
             {
                 base.HandleSensorEvent(sensorEvent);
                 WintapMessage wintapMessage = (WintapMessage)sensorEvent.Underlying;
-                // get the nested object as a dynamic so we can append the parent object fields
-                string msgType = wintapMessage.MessageType.ToString();
-                //  dynamic resolution detail: wintapmessage MessageType MUST match the underlying class name
-                dynamic flatMsg = null;
-                // Use reflection to get the property that matches MessageType
-                var propertyInfo = wintapMessage.GetType().GetProperty(wintapMessage.MessageType.ToString());
-                if (propertyInfo != null)
-                {
-                    var propertyValue = propertyInfo.GetValue(wintapMessage);
-
-                    if (propertyValue is WintapBase dynamicConvertible)
-                    {
-                        flatMsg = (ExpandoObject)dynamicConvertible.ToDynamic();
-                    }
-                }
-
-                flatMsg.PidHash = sensorEvent["PidHash"].ToString();
-                flatMsg.ProcessName = sensorEvent["ProcessName"].ToString();
-                flatMsg.PID = wintapMessage.PID;
-
-                // Parquet does not natively support .NET enum types
-                // converting enums to strings for Parquet compatibility
-                flatMsg.MessageType = wintapMessage.MessageType.ToString();
-                flatMsg.ActivityType = wintapMessage.ActivityType.ToString();
-
-                flatMsg.EventTime = wintapMessage.EventTime;
-                flatMsg.ComputerName = Environment.MachineName;
-                flatMsg.AgentId = wintapMessage.AgentId;
-                try
-                {
-                    flatMsg.ActivityId = wintapMessage.ActivityId;
-                    flatMsg.CorrelationId = wintapMessage.CorrelationId;
-                }
-                catch (Exception ex) { }
+                dynamic flatMsg = BuildFlatMessage(wintapMessage);
                 this.Save(flatMsg);
                 sensorEvent = null;
                 flatMsg = null;
@@ -73,6 +39,27 @@ namespace gov.llnl.wintap.core.etl.extract
             {
                 WintapLogger.Log.Append("WARN creating default sensor data object for pid: " + sensorEvent["PID"] + " message type: " + sensorEvent["MessageType"] + ", exception: " + ex.Message, LogLevel.Debug);
             }
+        }
+        internal static ExpandoObject BuildFlatMessage(WintapMessage wintapMessage)
+        {
+            // The payload property name must match MessageType for default ETL.
+            var property = wintapMessage.GetType().GetProperty(wintapMessage.MessageType.ToString());
+            if (property?.GetValue(wintapMessage) is not WintapBase payload)
+                throw new InvalidOperationException("Missing payload for " + wintapMessage.MessageType);
+
+            dynamic flatMsg = payload.ToDynamic();
+            flatMsg.PidHash = wintapMessage.PidHash.ToString();
+            flatMsg.ProcessName = wintapMessage.ProcessName.ToString();
+            flatMsg.PID = wintapMessage.PID;
+            // Parquet stores enum names, not .NET enum instances.
+            flatMsg.MessageType = wintapMessage.MessageType.ToString();
+            flatMsg.ActivityType = wintapMessage.ActivityType.ToString();
+            flatMsg.EventTime = wintapMessage.EventTime;
+            flatMsg.ComputerName = Environment.MachineName;
+            flatMsg.AgentId = wintapMessage.AgentId;
+            flatMsg.ActivityId = wintapMessage.ActivityId;
+            flatMsg.CorrelationId = wintapMessage.CorrelationId;
+            return (ExpandoObject)flatMsg;
         }
     }
 }

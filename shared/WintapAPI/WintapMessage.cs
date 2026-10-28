@@ -69,7 +69,10 @@ namespace gov.llnl.wintap.collect.models
             SELinuxInteraction,
 
             // Windows console cooked-input observations (append to preserve enum values).
-            WindowsShell
+            WindowsShell,
+
+            // Native PowerShell script-block observations (preserve existing enum values).
+            PowerShell
         }
         public enum ActivityTypeEnum { Start, Stop, Refresh, Rundown, Load, Unload, PsSetLoadImageNotifyRoutine, TerminateProcess, CreateSymbolicLink, SetThreadContext, OpenProcess, OpenThread, Read, Write, Open, Close, Delete, DeleteValue, CreateKey, DeleteKey, EventWritten, HighCpuUsage, TcpIpAccept, TcpIpRecv, TcpIpTCPCopy, TcpIpReconnect, TcpIpRetransmit, TcpIpDisconnect, TcpIpARPCopy, TcpIpDupACK, TcpIpFullACK, TcpIpPartACK, TcpIpConnect, TcpIpSend, TcpIpFail, TcpIpRecvIPV6, TcpIpSendIPV6, UdpIpFail, UdpIpSend, UdpIpRecv, Other, MemCommit, MemFree, MemReserve }; 
         public enum DirectionEnum { INBOUND, OUTBOUND };
@@ -152,6 +155,50 @@ namespace gov.llnl.wintap.collect.models
         public SELinuxInteractionData SELinuxInteraction { get; set; }
         public WintapAlertData WintapAlert { get; set; }
         public WindowsShellData WindowsShell { get; set; }
+        public PowerShellData PowerShell { get; set; }
+
+        /// <summary>
+        /// One native ETW 4104 script-block fragment, not proof of execution.
+        /// Text, path, fragment numbering and duplicates retain provider meaning.
+        /// The envelope PID identifies the emitting host, including embedded hosts.
+        /// </summary>
+        public class PowerShellData : WintapBase
+        {
+            /// <summary>Native Windows PowerShell or PowerShell Core ETW provider GUID.</summary>
+            public string ProviderGuid { get; set; }
+            /// <summary>Native ETW event ID; this payload currently models script-block event 4104.</summary>
+            public int EventId { get; set; }
+            /// <summary>ETW event schema version, currently 1; not the PowerShell engine version.</summary>
+            public int Version { get; set; }
+            /// <summary>ETW emitting thread ID within the envelope's host process.</summary>
+            public int ThreadId { get; set; }
+            /// <summary>
+            /// One-based position of this fragment within the native script block.
+            /// A short text value can be a complete block, rather than a fragment.
+            /// </summary>
+            public int MessageNumber { get; set; }
+            /// <summary>
+            /// Expected native fragment count. 1/1 is a complete single-fragment block;
+            /// observing only 3/3 does not provide fragments 1 and 2 or a complete block.
+            /// Fragments are preserved separately, without assembly or deduplication.
+            /// </summary>
+            public int MessageTotal { get; set; }
+            /// <summary>
+            /// Exact decoded script-block fragment, preserving Unicode and line endings.
+            /// May include host/editor housekeeping such as querying $global:? or $Host,
+            /// or invoking prompt; it is not necessarily a command typed by the user.
+            /// Such small blocks alone do not establish truncation or missing fragments.
+            /// </summary>
+            public string ScriptBlockText { get; set; }
+            /// <summary>Native script-block identifier; not a process identity or execution counter.</summary>
+            public string ScriptBlockId { get; set; }
+            /// <summary>
+            /// Native source script path, with original case preserved. Often empty for
+            /// interactive commands, dynamically created blocks and host housekeeping.
+            /// An empty path does not by itself indicate a decoding error.
+            /// </summary>
+            public string Path { get; set; }
+        }
 
         /// <summary>
         /// A cmd.exe cooked-input line reported by console ETW.

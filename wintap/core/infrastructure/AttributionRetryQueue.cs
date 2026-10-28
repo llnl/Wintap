@@ -91,7 +91,7 @@ namespace gov.llnl.wintap.core.infrastructure
             // default so a just-arrived Clone/Execve record can establish the
             // owner before an Unknown identity is emitted.
             // Console input can arrive before its process registration.
-            foreach (string token in (configured ?? "Registry,File,TcpConnection,UdpPacket,WindowsShell").Split(','))
+            foreach (string token in (configured ?? "Registry,File,TcpConnection,UdpPacket,WindowsShell,PowerShell").Split(','))
             {
                 string name = token.Trim();
                 if (name.Length == 0 || name.Equals("none", StringComparison.OrdinalIgnoreCase)) continue;

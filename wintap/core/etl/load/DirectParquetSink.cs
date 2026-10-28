@@ -166,7 +166,13 @@ namespace gov.llnl.wintap.core.etl.load
             }
         }
 
-        private static ExpandoObject ToExpando(WintapMessage message)
+        private static ExpandoObject ToExpando(WintapMessage message) => DirectParquetProjection.ToExpando(message);
+    }
+
+    // Keep row projection independent of writer/session initialization.
+    internal static class DirectParquetProjection
+    {
+        internal static ExpandoObject ToExpando(WintapMessage message)
         {
             ExpandoObject expando = new ExpandoObject();
             IDictionary<string, object> values = expando;
@@ -179,6 +185,8 @@ namespace gov.llnl.wintap.core.etl.load
             values["PidHash"] = message.PidHash ?? string.Empty;
             values["ProcessName"] = message.ProcessName ?? string.Empty;
             values["ProcessPath"] = message.ProcessPath ?? string.Empty;
+            values["ActivityId"] = message.ActivityId ?? string.Empty;
+            values["CorrelationId"] = message.CorrelationId ?? string.Empty;
             values["CapturedUtc"] = DateTime.UtcNow;
 
             AddScalarProperties(values, "Process", message.Process);
@@ -188,6 +196,7 @@ namespace gov.llnl.wintap.core.etl.load
             AddScalarProperties(values, "Registry", message.Registry);
             AddScalarProperties(values, "GenericMessage", message.GenericMessage);
             AddScalarProperties(values, "WindowsShell", message.WindowsShell);
+            AddScalarProperties(values, "PowerShell", message.PowerShell);
 
             return expando;
         }
