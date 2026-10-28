@@ -187,6 +187,7 @@ namespace gov.llnl.wintap.core.etl.load
             AddScalarProperties(values, "UdpPacket", message.UdpPacket);
             AddScalarProperties(values, "Registry", message.Registry);
             AddScalarProperties(values, "GenericMessage", message.GenericMessage);
+            AddScalarProperties(values, "WindowsShell", message.WindowsShell);
 
             return expando;
         }

@@ -107,6 +107,64 @@ namespace Wintap.Tests
             Assert.Equal(before, JsonSerializer.Serialize(message));
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void ShellLifetimeSurvivesRetryUntilCanonicalOwnerArrives(bool wrongInitialLifetime)
+        {
+            long now = 0;
+            var message = Message(MessageType.WindowsShell);
+            long eventTime = message.EventTime, receiveTime = message.ReceiveTime;
+            DateTime start = Time.AddSeconds(-10);
+            ProcessAttribution.RecordExpectedProcessStart(message, start.ToFileTimeUtc());
+            var resolver = new RecordingResolver
+            {
+                Current = wrongInitialLifetime ? new ProcessRecord
+                {
+                    ProcessId = 42, CreateTime = start.AddSeconds(5), PidHash = "wrong", ProcessName = "cmd.exe"
+                } : null
+            };
+            int emitted = 0;
+            AttributionRetryQueue queue = null;
+            void Resolve(WintapMessage pending, int attempt)
+            {
+                var owner = EventOwnerSelection.ResolveOwner(resolver, pending, Time, true, out _);
+                if (ProcessAttribution.TryApply(pending, owner, (_, _) => false, requireProcessStart: true)) emitted++;
+                else Assert.True(queue.TrySchedule(pending, attempt));
+            }
+            queue = new AttributionRetryQueue(Resolve, clock: () => now, startTimer: false);
+            try
+            {
+                Resolve(message, 0);
+                Assert.Equal(0, emitted);
+                Assert.Equal("", message.PidHash);
+                resolver.Current = new ProcessRecord
+                {
+                    ProcessId = 42, CreateTime = start, PidHash = "canonical", ProcessName = "cmd.exe"
+                };
+                now = 1000;
+                queue.Pump();
+                queue.Pump();
+                Assert.Equal(1, emitted);
+                Assert.Equal("canonical", message.PidHash);
+                Assert.Equal(eventTime, message.EventTime);
+                Assert.Equal(receiveTime, message.ReceiveTime);
+                Assert.Equal(0, Assert.Single(queue.SnapshotDiagnostics(), d => d.Stream == MessageType.WindowsShell).Pending);
+            }
+            finally { queue.Shutdown(); }
+        }
+
+        [Fact]
+        public void OrdinaryAttributionNeedsNoProviderLifetimeEvidence()
+        {
+            var message = Message(MessageType.File);
+            var owner = new ProcessRecord { ProcessId = 42, PidHash = "canonical", ProcessName = "owner" };
+            Assert.True(ProcessAttribution.TryApply(message, owner));
+            Assert.Equal("canonical", message.PidHash);
+            Assert.Equal("owner", message.ProcessName);
+            Assert.False(ProcessAttribution.TryApply(message, owner, requireProcessStart: true));
+        }
+
         private static WintapMessage Message(MessageType type) => new WintapMessage(Time, 42, type)
         {
             PidHash = "", ProcessName = "", EventTime = Time.ToFileTimeUtc()

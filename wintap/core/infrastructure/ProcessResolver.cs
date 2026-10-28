@@ -64,7 +64,7 @@ namespace gov.llnl.wintap.core.infrastructure
         private const string UnknownProcessName = "(unknown)";
         private static DateTime? _cachedLinuxBootTimeUtc;
         private static long? _cachedLinuxClockTicksPerSecond;
-        private static readonly TimeSpan LiveStartTimeMatchTolerance = TimeSpan.FromSeconds(2);
+        internal static readonly TimeSpan LiveStartTimeMatchTolerance = TimeSpan.FromSeconds(2);
 
         private struct PendingExit
         {

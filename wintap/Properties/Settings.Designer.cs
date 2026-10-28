@@ -158,6 +158,14 @@ namespace gov.llnl.wintap.Properties {
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool WindowsShellSensor {
+            get { return ((bool)(this["WindowsShellSensor"])); }
+            set { this["WindowsShellSensor"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
         public bool UISensor {
             get {
                 return ((bool)(this["UISensor"]));

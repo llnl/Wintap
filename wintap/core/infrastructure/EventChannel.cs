@@ -71,6 +71,9 @@ namespace gov.llnl.wintap.core.infrastructure
         private static readonly bool _skipEsperSend = IsConfiguredEnabled("WINTAP_SKIP_ESPER_SEND");
         private static long _fileProcessCacheHits;
         private static long _fileProcessCacheMisses;
+        private static long _windowsShellAttributionDrops;
+        internal static long WindowsShellAttributionDrops => Interlocked.Read(ref _windowsShellAttributionDrops);
+
 
         private static readonly Lazy<string> UnknownPidHash = new Lazy<string>(() => new ProcessHash().GenPidHash(-1, 0));
 
@@ -318,23 +321,13 @@ namespace gov.llnl.wintap.core.infrastructure
                 // Tag with AgentId
                 streamedEvent.AgentId = StateManager.AgentId.ToString();
 
-                if (_directParquetEnabled)
-                {
-                    long directHealthStarted = measure ? Stopwatch.GetTimestamp() : 0;
-                    InspectForHealth(streamedEvent);
-                    if (measure)
-                    {
-                        timing.HealthTicks = Stopwatch.GetTimestamp() - directHealthStarted;
-                    }
-                    DirectParquetSink.Save(streamedEvent);
-                    AttributionTrace.Record(streamedEvent, "direct-sink-return", attributionRetryAttempt);
-                    return;
-                }
+                bool requiresVerifiedLifetime = streamedEvent.MessageType == WintapMessage.MessageTypeEnum.WindowsShell;
+                bool ownerVerified = false;
                 long processResolveStarted = measure ? Stopwatch.GetTimestamp() : 0;
                 DateTime eventTimeUtc = DateTime.FromFileTimeUtc(streamedEvent.EventTime);
 
                 // Resolve process information using platform-specific resolver
-                if (_processResolver != null && !_skipProcessResolve)
+                if (_processResolver != null && !_skipProcessResolve && (!_directParquetEnabled || requiresVerifiedLifetime))
                 {
                     if (streamedEvent.MessageType != WintapMessage.MessageTypeEnum.Process)
                     {
@@ -356,6 +349,11 @@ namespace gov.llnl.wintap.core.infrastructure
                                 Interlocked.Increment(ref _fileProcessCacheMisses);
                         }
 
+                        // Console input must match the provider's attached-client lifetime.
+                        ownerVerified = ProcessAttribution.TryApply(streamedEvent, ownerProcess,
+                            requireProcessStart: requiresVerifiedLifetime);
+                        if (!ownerVerified) ownerProcess = null;
+
                         if (ownerProcess == null) AttributionTrace.Record(streamedEvent, "owner-miss", attributionRetryAttempt);
                         if (ownerProcess == null &&
                             attributionRetries.Value.TrySchedule(streamedEvent, attributionRetryAttempt))
@@ -367,11 +365,9 @@ namespace gov.llnl.wintap.core.infrastructure
 
                         if (ownerProcess != null)
                         {
-                            streamedEvent.PidHash = ownerProcess.PidHash;
-                            streamedEvent.ProcessName = ownerProcess.ProcessName;
                             AttributionTrace.Record(streamedEvent, "owner-resolved", attributionRetryAttempt);
                         }
-                        else
+                        else if (!requiresVerifiedLifetime)
                         {
                             // Never substitute event time for process-start time. An unresolved
                             // owner gets the explicit unknown identity, not a fabricated instance.
@@ -475,6 +471,26 @@ namespace gov.llnl.wintap.core.infrastructure
                         LogLevel.Warn);
                 }
 
+                // Unverified console input must never leave through either output route.
+                if (requiresVerifiedLifetime && !ownerVerified)
+                {
+                    Interlocked.Increment(ref _windowsShellAttributionDrops);
+                    AttributionTrace.Record(streamedEvent, "windows-shell-lifetime-unresolved", attributionRetryAttempt);
+                    return;
+                }
+
+                if (_directParquetEnabled)
+                {
+                    long directHealthStarted = measure ? Stopwatch.GetTimestamp() : 0;
+                    InspectForHealth(streamedEvent);
+                    if (measure)
+                    {
+                        timing.HealthTicks = Stopwatch.GetTimestamp() - directHealthStarted;
+                    }
+                    DirectParquetSink.Save(streamedEvent);
+                    AttributionTrace.Record(streamedEvent, "direct-sink-return", attributionRetryAttempt);
+                    return;
+                }
                 // Send to backing store
                 if (streamedEvent.MessageType == WintapMessage.MessageTypeEnum.Process)
                 {

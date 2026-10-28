@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Lawrence Livermore National Security, LLC.
  * Produced at the Lawrence Livermore National Laboratory.
  * All rights reserved.
@@ -66,7 +66,10 @@ namespace gov.llnl.wintap.collect.models
             Sysdig,
             SELinuxAvc,
             SELinuxTransition,
-            SELinuxInteraction
+            SELinuxInteraction,
+
+            // Windows console cooked-input observations (append to preserve enum values).
+            WindowsShell
         }
         public enum ActivityTypeEnum { Start, Stop, Refresh, Rundown, Load, Unload, PsSetLoadImageNotifyRoutine, TerminateProcess, CreateSymbolicLink, SetThreadContext, OpenProcess, OpenThread, Read, Write, Open, Close, Delete, DeleteValue, CreateKey, DeleteKey, EventWritten, HighCpuUsage, TcpIpAccept, TcpIpRecv, TcpIpTCPCopy, TcpIpReconnect, TcpIpRetransmit, TcpIpDisconnect, TcpIpARPCopy, TcpIpDupACK, TcpIpFullACK, TcpIpPartACK, TcpIpConnect, TcpIpSend, TcpIpFail, TcpIpRecvIPV6, TcpIpSendIPV6, UdpIpFail, UdpIpSend, UdpIpRecv, Other, MemCommit, MemFree, MemReserve }; 
         public enum DirectionEnum { INBOUND, OUTBOUND };
@@ -148,6 +151,17 @@ namespace gov.llnl.wintap.collect.models
         public SELinuxTransitionData SELinuxTransition { get; set; }
         public SELinuxInteractionData SELinuxInteraction { get; set; }
         public WintapAlertData WintapAlert { get; set; }
+        public WindowsShellData WindowsShell { get; set; }
+
+        /// <summary>
+        /// A cmd.exe cooked-input line reported by console ETW.
+        /// This is not proof of command execution; EventTime is the provider timestamp.
+        /// </summary>
+        public class WindowsShellData : WintapBase
+        {
+            public string CommandText { get; set; }
+            public int SessionId { get; set; }
+        }
 
         public class ProcessObject : WintapBase
         {

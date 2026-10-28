@@ -90,7 +90,8 @@ namespace gov.llnl.wintap.core.infrastructure
             // independent ring-buffer pollers. Retry those bounded streams by
             // default so a just-arrived Clone/Execve record can establish the
             // owner before an Unknown identity is emitted.
-            foreach (string token in (configured ?? "Registry,File,TcpConnection,UdpPacket").Split(','))
+            // Console input can arrive before its process registration.
+            foreach (string token in (configured ?? "Registry,File,TcpConnection,UdpPacket,WindowsShell").Split(','))
             {
                 string name = token.Trim();
                 if (name.Length == 0 || name.Equals("none", StringComparison.OrdinalIgnoreCase)) continue;
