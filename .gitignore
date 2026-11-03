@@ -367,3 +367,19 @@ wintap/platform/linux/sensor/ebpf/tracers/*.bpf.o
 /.claude/agents/
 /*-wiki/
 /developer_docs/
+
+# Local CPU investigation artifacts (never source or reusable summaries)
+/devtools/analysis-*/
+/devtools/lintap-build-canary-*/
+perf.data
+perf.data.*
+stacks.folded
+cpu-flamegraph.svg
+self-time.txt
+call-chains.txt
+/devtools/lintap-inventory-*/
+/devtools/lintap-compare-*/
+/devtools/lintap-report-existing-*/
+# Existing smoke evidence is private validation data, not source.
+/smoke-results/
+/devtools/smoke-results/
