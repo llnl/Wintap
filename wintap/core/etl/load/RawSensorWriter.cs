@@ -143,8 +143,17 @@ namespace gov.llnl.wintap.core.etl.load
                 using (var command = duckDBConnection.CreateCommand())
                 {
                     command.CommandText = $"COPY (SELECT * FROM read_parquet('{DuckDBPath(sourceParquetGlob)}')) TO '{DuckDBPath(tempDestinationFile)}' (FORMAT PARQUET, COMPRESSION SNAPPY);";
-                    WintapLogger.Log.Append("DuckDB raw_sensor command: " + command.CommandText, LogLevel.Info);
-                    command.ExecuteNonQuery();
+                    WintapLogger.Log.Append("Executing DuckDB raw_sensor copy", LogLevel.Info);
+                    using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.RawSensorCopy);
+                    try
+                    {
+                        command.ExecuteNonQuery();
+                    }
+                    catch
+                    {
+                        operationTiming.MarkFailed();
+                        throw;
+                    }
                 }
             }
 
