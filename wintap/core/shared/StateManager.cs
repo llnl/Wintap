@@ -144,6 +144,7 @@ namespace gov.llnl.wintap.core.shared
                 settings["ImageLoad"] = Properties.Settings.Default.ImageLoadSensor;
                 settings["File"] = Properties.Settings.Default.FileSensor;
                 settings["Registry"] = Properties.Settings.Default.RegistrySensor;
+                settings["PowerShell"] = Properties.Settings.Default.PowerShellSensor;
                 settings["MemoryMap"] = Properties.Settings.Default.MemoryMapSensor;
                 settings["ApiCall"] = Properties.Settings.Default.ApiCallSensor;
                 settings["DeveloperMode"] = false;
@@ -184,6 +185,10 @@ namespace gov.llnl.wintap.core.shared
                 if (kvp.Key == "Registry")
                 {
                     translatedSettings.Add(nameof(Properties.Settings.Default.RegistrySensor), kvp.Value.ToString());
+                }
+                if (kvp.Key == "PowerShell")
+                {
+                    translatedSettings.Add(nameof(Properties.Settings.Default.PowerShellSensor), kvp.Value.ToString());
                 }
                 if (kvp.Key == "MemoryMap")
                 {
