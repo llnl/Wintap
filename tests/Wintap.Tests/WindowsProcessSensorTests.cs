@@ -183,7 +183,7 @@ namespace Wintap.Tests
             Assert.True(sensor.InitializeSnapshotRefresh());
 
             WintapMessage child = emitted.Single(message => message.PID == 300);
-            Assert.Equal(string.Empty, child.Process.ParentPidHash);
+            Assert.Equal(TestPidHash(-1, 0), child.Process.ParentPidHash);
         }
 
         [Fact]
@@ -204,7 +204,7 @@ namespace Wintap.Tests
 
             Assert.True(sensor.InitializeSnapshotRefresh());
 
-            Assert.Equal(new[] { -1, 0, 4, 20, 10, 30 }, emitted.Select(message => message.PID).ToArray());
+            Assert.Equal(new[] { 4, 0, -1, 20, 10, 30 }, emitted.Select(message => message.PID).ToArray());
         }
 
         [Fact]
@@ -250,7 +250,7 @@ namespace Wintap.Tests
             DateTime createTime = BootTime().AddMinutes(1);
             var sensor = CreateSensor(
                 out List<WintapMessage> emitted,
-                resolver: (pid, time) => new ProcessRecord { ProcessId = pid, CreateTime = createTime.AddSeconds(1) },
+                getProcessHistory: () => new[] { new ProcessRecord { ProcessId = 400, CreateTime = createTime.AddSeconds(-1), PidHash = "covered" } },
                 enumerateSnapshot: () => new[] { Snapshot(400, 4, createTime, "duplicate.exe") });
 
             Assert.True(sensor.InitializeSnapshotRefresh());
@@ -565,7 +565,7 @@ namespace Wintap.Tests
 
         [Fact]
         [Trait("Category", "ptr-02")]
-        public void InitializeSnapshotRefresh_OuterFailureMarksRefreshAsRebuilt()
+        public void InitializeSnapshotRefresh_DeltaFailurePreservesRetainedBootDecision()
         {
             var sensor = CreateSensor(
                 out _,
@@ -573,7 +573,7 @@ namespace Wintap.Tests
                 isProcessRowOpen: hash => true);
 
             Assert.False(sensor.InitializeSnapshotRefresh());
-            Assert.True(sensor.LastRefreshRebuiltFromSnapshot);
+            Assert.False(sensor.LastRefreshRebuiltFromSnapshot);
         }
 
         [Fact]
@@ -621,12 +621,12 @@ namespace Wintap.Tests
             IReadOnlyCollection<string> capturedLiveSet = null;
             var sensor = CreateSensor(
                 out _,
-                resolver: (pid, time) => new ProcessRecord
+                getProcessHistory: () => new[] { new ProcessRecord
                 {
-                    ProcessId = pid,
-                    CreateTime = createTime.AddSeconds(1),
+                    ProcessId = 500,
+                    CreateTime = createTime.AddSeconds(-1),
                     PidHash = resolverHash
-                },
+                } },
                 enumerateSnapshot: () => new[] { Snapshot(500, 4, createTime, "duplicate.exe") },
                 isProcessRowOpen: hash => true,
                 reconcileStartupOpenRows: (liveSet, end) =>
@@ -1110,6 +1110,7 @@ namespace Wintap.Tests
                 resolver: (pid, time) => pid == 400
                     ? new ProcessRecord { ProcessId = pid, CreateTime = duplicateCreateTime.AddSeconds(1) }
                     : null,
+                getProcessHistory: () => new[] { new ProcessRecord { ProcessId = 400, CreateTime = duplicateCreateTime.AddSeconds(-1), PidHash = "covered-counter-fixture" } },
                 utcNow: () => now,
                 enumerateSnapshot: () => new[]
                 {
@@ -1174,12 +1175,12 @@ namespace Wintap.Tests
 
         [Fact]
         [Trait("Category", "wpc-07")]
-        public void HandleReplayedStart_SuppressesDuplicateWithinToleranceWithoutIncrementingBootReplayCount()
+        public void HandleReplayedStart_SuppressesExactDuplicateWithoutIncrementingBootReplayCount()
         {
             DateTime replayedStart = BootTime().AddMinutes(10);
             var sensor = CreateSensor(
                 out List<WintapMessage> emitted,
-                resolver: (pid, time) => new ProcessRecord { ProcessId = pid, CreateTime = replayedStart.AddSeconds(1) });
+                getProcessHistory: () => new[] { new ProcessRecord { ProcessId = 1000, CreateTime = replayedStart, PidHash = TestPidHash(1000, replayedStart.ToFileTimeUtc()) } });
 
             WintapMessage message = sensor.HandleReplayedStart(1000, 4, replayedStart, "duplicate.exe", "duplicate.exe", null, SidParseStatus.Extracted);
 
@@ -1246,13 +1247,14 @@ namespace Wintap.Tests
         [Trait("Category", "wpc-11")]
         [InlineData(true)]
         [InlineData(false)]
-        public void HandleReplayedStart_DuplicateRepairsOnlyUnknownParent(bool unknownParent)
+        public void HandleReplayedStart_ExactDuplicateDoesNotRepairPublishedParent(bool unknownParent)
         {
             DateTime replayedStart = BootTime().AddMinutes(13);
             string storedParentHash = unknownParent ? TestPidHash(-1, 0) : "healthy-parent";
             var repairs = new List<(string PidHash, int ParentPid, string ParentPidHash)>();
             var sensor = CreateSensor(
                 out List<WintapMessage> emitted,
+                getProcessHistory: () => new[] { new ProcessRecord { ProcessId = 1100, PidHash = TestPidHash(1100, replayedStart.ToFileTimeUtc()), CreateTime = replayedStart, ParentPidHash = storedParentHash } },
                 resolver: (pid, time) => pid == 1100
                     ? new ProcessRecord
                     {
@@ -1275,14 +1277,7 @@ namespace Wintap.Tests
             Assert.Empty(emitted);
             Assert.Equal(1, sensor.DedupSuppressedCount);
             Assert.Equal(0, sensor.BootReplayCount);
-            if (unknownParent)
-            {
-                Assert.Equal(("child-hash", 1099, "resolved-parent"), Assert.Single(repairs));
-            }
-            else
-            {
-                Assert.Empty(repairs);
-            }
+            Assert.Empty(repairs);
         }
 
         [Fact]
@@ -1328,13 +1323,14 @@ namespace Wintap.Tests
 
         [Fact]
         [Trait("Category", "wpc-12")]
-        public void HandleReplayedStart_UnspecifiedUtcDuplicateIsSuppressedAndRepairsParentOnce()
+        public void HandleReplayedStart_UnspecifiedUtcExactDuplicateIsSuppressedWithoutRepair()
         {
             DateTime replayedStartUtc = BootTime().AddMinutes(15);
             DateTime storedCreateTime = DateTime.SpecifyKind(replayedStartUtc, DateTimeKind.Unspecified);
             int repairCalls = 0;
             var sensor = CreateSensor(
                 out List<WintapMessage> emitted,
+                getProcessHistory: () => new[] { new ProcessRecord { ProcessId = 1300, PidHash = TestPidHash(1300, replayedStartUtc.ToFileTimeUtc()), CreateTime = storedCreateTime } },
                 resolver: (pid, time) => pid == 1300
                     ? new ProcessRecord
                     {
@@ -1360,7 +1356,7 @@ namespace Wintap.Tests
             Assert.Empty(emitted);
             Assert.Equal(1, sensor.DedupSuppressedCount);
             Assert.Equal(0, sensor.BootReplayCount);
-            Assert.Equal(1, repairCalls);
+            Assert.Equal(0, repairCalls);
         }
 
         [Fact]

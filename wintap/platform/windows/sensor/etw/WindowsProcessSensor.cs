@@ -35,7 +35,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         internal delegate bool TryReadHeartbeatDelegate(out DateTime lastWriteUtc, out string sessionId);
 
         private static readonly TimeSpan SnapshotStartMatchTolerance = TimeSpan.FromSeconds(2);
-        internal static readonly TimeSpan BootReplayMatchTolerance = TimeSpan.FromSeconds(2);
+        private const long ReplaySnapshotMatchToleranceTicks = 5 * TimeSpan.TicksPerMillisecond;
         internal static readonly TimeSpan StopMetricCorrelationWindow = TimeSpan.FromSeconds(5);
         internal static readonly TimeSpan QaCounterLogInterval = TimeSpan.FromSeconds(60);
         private const int DefaultSidAccountCacheSize = 1024;
@@ -92,6 +92,13 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         private long bootReplayCount;
         private int lineageValidationLogged;
         private int lineageValidationDeferredLogged;
+        private bool bootstrapAttempted;
+        private bool bootstrapReady;
+        private bool deltaAttempted;
+        private bool deltaCompleted;
+        private List<SnapshotProcessInfo> startupSeeds;
+        private HashSet<string> replayedIdentities;
+        private readonly HashSet<string> observedReplayStartHashes = new HashSet<string>(StringComparer.Ordinal);
 
         internal WindowsProcessSensor(
             Func<int, DateTime, ProcessRecord> resolveProcessAtTime = null,
@@ -392,9 +399,20 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
 
         internal bool InitializeSnapshotRefresh()
         {
+            return InitializeStartupBootstrap() && InitializeSnapshotDelta();
+        }
+
+        internal bool InitializeStartupBootstrap()
+        {
+            if (bootstrapAttempted)
+            {
+                return bootstrapReady;
+            }
+            bootstrapAttempted = true;
+            observedReplayStartHashes.Clear();
             try
             {
-                log("Windows process snapshot refresh starting", LogLevel.Info);
+                log("Windows process startup bootstrap starting", LogLevel.Info);
                 bool keepTree = false;
                 bool newBootSession = false;
                 string degradeReason;
@@ -454,32 +472,107 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
 
                 LastRefreshRebuiltFromSnapshot = !keepTree;
 
-                List<SnapshotProcessInfo> snapshot = BuildSnapshotBatch(liveSystemStart);
-                Dictionary<SnapshotProcessInfo, string> parentPidHashes = BuildParentPidHashes(snapshot);
-                var livePidHashes = new HashSet<string>(StringComparer.Ordinal);
-                int sent = 0;
-
-                foreach (SnapshotProcessInfo processInfo in snapshot.OrderBy(p => p.CreateTimeUtc).ThenBy(p => p.Pid))
+                // Seed context is established before any boot child is published.
+                startupSeeds = BuildStartupSeeds(liveSystemStart);
+                string rootHash = genPidHash(4, startupSeeds[0].CreateTimeUtc.ToFileTimeUtc());
+                foreach (SnapshotProcessInfo seed in startupSeeds)
                 {
-                    if (!processInfo.IsSynthetic && TryGetDuplicateProcessInstance(
-                        processInfo.Pid,
-                        processInfo.CreateTimeUtc,
-                        SnapshotStartMatchTolerance,
-                        out ProcessRecord existing))
+                    emit(CreateRefreshMessage(seed, new Dictionary<SnapshotProcessInfo, string> { [seed] = rootHash }));
+                    Interlocked.Increment(ref snapshotCount);
+                }
+                replayedIdentities = new HashSet<string>(
+                    (getProcessHistory() ?? Array.Empty<ProcessRecord>())
+                        .Where(record => record != null && !string.IsNullOrWhiteSpace(record.PidHash))
+                        .Select(record => record.PidHash), StringComparer.Ordinal);
+                bootstrapReady = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastRefreshRebuiltFromSnapshot = true;
+                log($"Windows process startup bootstrap failed; replay skipped: {ex.Message}", LogLevel.Error);
+                return false;
+            }
+        }
+
+        internal bool InitializeSnapshotDelta()
+        {
+            if (!bootstrapReady)
+            {
+                log("Windows process snapshot delta skipped: bootstrap not initialized", LogLevel.Error);
+                return false;
+            }
+            if (deltaAttempted)
+            {
+                return deltaCompleted;
+            }
+            deltaAttempted = true;
+            try
+            {
+                var snapshot = (enumerateSnapshot() ?? Array.Empty<SnapshotProcessInfo>())
+                    .Where(process => process != null && process.Pid > 0 && process.Pid != 4 && process.CreateTimeUtc != default)
+                    .OrderBy(process => process.CreateTimeUtc).ThenBy(process => process.Pid).ToList();
+                IReadOnlyList<ProcessRecord> history = getProcessHistory() ?? Array.Empty<ProcessRecord>();
+                var chosenHashes = new Dictionary<SnapshotProcessInfo, string>();
+                var covered = new HashSet<SnapshotProcessInfo>();
+                var livePidHashes = new HashSet<string>(startupSeeds.Select(seed =>
+                    genPidHash(seed.Pid, seed.CreateTimeUtc.ToFileTimeUtc())), StringComparer.Ordinal);
+                foreach (SnapshotProcessInfo process in snapshot)
+                {
+                    DateTime snapshotBirth = process.CreateTimeUtc.ToUniversalTime();
+                    string hash = genPidHash(process.Pid, snapshotBirth.ToFileTimeUtc());
+                    ProcessRecord match = history.FirstOrDefault(record => record != null && record.ProcessId == process.Pid && record.PidHash == hash);
+                    if (match == null)
                     {
-                        livePidHashes.Add(existing.PidHash);
+                        var candidates = history.Where(record => record != null && record.ProcessId == process.Pid &&
+                            !string.IsNullOrWhiteSpace(record.PidHash) &&
+                            (!record.ExitTime.HasValue || HistoryTimeUtc(record.ExitTime.Value) >= snapshotBirth) &&
+                            (observedReplayStartHashes.Contains(record.PidHash)
+                                ? IsCompatibleReplaySnapshot(record, process, snapshotBirth)
+                                : HistoryTimeUtc(record.CreateTime) <= snapshotBirth &&
+                                  snapshotBirth - HistoryTimeUtc(record.CreateTime) <= SnapshotStartMatchTolerance))
+                            .GroupBy(record => record.PidHash, StringComparer.Ordinal)
+                            .Select(group => group.First()).ToList();
+                        if (candidates.Count == 1)
+                        {
+                            match = candidates[0];
+                        }
+                        else if (candidates.Count > 1)
+                        {
+                            log($"Windows process snapshot overlap ambiguous: pid={process.Pid}; preserving snapshot identity", LogLevel.Warn);
+                        }
+                    }
+                    chosenHashes[process] = match?.PidHash ?? hash;
+                    livePidHashes.Add(chosenHashes[process]);
+                    if (match != null)
+                    {
+                        covered.Add(process);
+                        Interlocked.Increment(ref dedupSuppressedCount);
+                    }
+                }
+                Dictionary<SnapshotProcessInfo, string> parentPidHashes = BuildParentPidHashes(snapshot, chosenHashes, history);
+                int sent = 0;
+                var publishedHashes = new HashSet<string>(StringComparer.Ordinal);
+                foreach (SnapshotProcessInfo process in snapshot)
+                {
+                    if (covered.Contains(process))
+                    {
+                        continue;
+                    }
+                    if (!publishedHashes.Add(chosenHashes[process]))
+                    {
                         Interlocked.Increment(ref dedupSuppressedCount);
                         continue;
                     }
-
-                    WintapMessage message = CreateRefreshMessage(processInfo, parentPidHashes);
-                    emit(message);
-                    livePidHashes.Add(message.PidHash);
+                    if (parentPidHashes[process] == genPidHash(-1, 0))
+                    {
+                        log($"Windows process snapshot missing compatible parent evidence: pid={process.Pid} parent_pid={process.ParentPid}", LogLevel.Warn);
+                    }
+                    emit(CreateRefreshMessage(process, parentPidHashes));
+                    Interlocked.Increment(ref snapshotCount);
                     sent++;
                 }
-
-                Interlocked.Exchange(ref snapshotCount, sent);
-                if (keepTree)
+                if (!LastRefreshRebuiltFromSnapshot)
                 {
                     try
                     {
@@ -507,15 +600,32 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 }
 
                 log($"Windows process snapshot refresh complete. Refreshed {sent} existing processes", LogLevel.Info);
+                deltaCompleted = true;
                 return true;
             }
             catch (Exception ex)
             {
-                LastRefreshRebuiltFromSnapshot = true;
-                log($"Windows process snapshot refresh failed: {ex.Message}", LogLevel.Error);
+                log($"Windows process snapshot delta failed; bootstrap/replay history retained: {ex.Message}", LogLevel.Error);
                 log($"Windows process snapshot refresh stack trace: {ex.StackTrace}", LogLevel.Debug);
                 return false;
             }
+        }
+
+        private static bool IsCompatibleReplaySnapshot(ProcessRecord record, SnapshotProcessInfo process, DateTime snapshotBirth)
+        {
+            long birthDifferenceTicks = HistoryTimeUtc(record.CreateTime).Ticks - snapshotBirth.Ticks;
+            return Math.Abs(birthDifferenceTicks) <= ReplaySnapshotMatchToleranceTicks &&
+                IsKnownProcessName(record.ProcessName) && IsKnownProcessName(process.Name) &&
+                string.Equals(record.ProcessName, process.Name, StringComparison.OrdinalIgnoreCase) &&
+                record.ParentProcessId > 0 && process.ParentPid > 0 && record.ParentProcessId == process.ParentPid;
+        }
+
+        private static bool IsKnownProcessName(string name)
+        {
+            return !string.IsNullOrWhiteSpace(name) &&
+                !string.Equals(name, "unknown", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(name, "(unknown)", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(name, "<unknown>", StringComparison.OrdinalIgnoreCase);
         }
 
         internal bool TryLogExplorerProcessLineageValidation()
@@ -717,7 +827,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             return string.IsNullOrWhiteSpace(pathName) ? "<unknown>" : pathName;
         }
 
-        private List<SnapshotProcessInfo> BuildSnapshotBatch(long? systemStartFileTimeUtc)
+        private List<SnapshotProcessInfo> BuildStartupSeeds(long? systemStartFileTimeUtc)
         {
             DateTime anchorUtc;
             if (systemStartFileTimeUtc != null)
@@ -737,8 +847,6 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 CreateSystemSnapshotProcess(-1, "Unknown", "unknown-sys", anchorUtc)
             };
 
-            IReadOnlyList<SnapshotProcessInfo> liveProcesses = enumerateSnapshot() ?? Array.Empty<SnapshotProcessInfo>();
-            snapshot.AddRange(liveProcesses.Where(p => p != null && p.CreateTimeUtc != default));
             return snapshot;
         }
 
@@ -757,29 +865,57 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             };
         }
 
-        private Dictionary<SnapshotProcessInfo, string> BuildParentPidHashes(IReadOnlyList<SnapshotProcessInfo> snapshot)
+        private static DateTime HistoryTimeUtc(DateTime time)
+        {
+            return time.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(time, DateTimeKind.Utc) : time.ToUniversalTime();
+        }
+
+        private Dictionary<SnapshotProcessInfo, string> BuildParentPidHashes(
+            IReadOnlyList<SnapshotProcessInfo> snapshot,
+            Dictionary<SnapshotProcessInfo, string> chosenHashes,
+            IReadOnlyList<ProcessRecord> history)
         {
             var parentPidHashes = new Dictionary<SnapshotProcessInfo, string>();
 
             foreach (SnapshotProcessInfo processInfo in snapshot)
             {
-                if (processInfo.IsSynthetic)
+                DateTime childBirth = processInfo.CreateTimeUtc.ToUniversalTime();
+                if (processInfo.ParentPid == 4)
                 {
-                    DateTime createTimeUtc = processInfo.CreateTimeUtc.ToUniversalTime();
-                    parentPidHashes[processInfo] = genPidHash(4, createTimeUtc.ToFileTimeUtc());
+                    parentPidHashes[processInfo] = genPidHash(4, startupSeeds[0].CreateTimeUtc.ToFileTimeUtc());
+                    continue;
+                }
+
+                parentPidHashes[processInfo] = genPidHash(-1, 0);
+                if (processInfo.ParentPid == processInfo.Pid)
+                {
                     continue;
                 }
 
                 SnapshotProcessInfo parent = snapshot
-                    .Where(candidate => candidate.Pid == processInfo.ParentPid && candidate.CreateTimeUtc.ToUniversalTime() < processInfo.CreateTimeUtc.ToUniversalTime())
+                    .Where(candidate => candidate.Pid == processInfo.ParentPid && candidate.CreateTimeUtc.ToUniversalTime() < childBirth &&
+                        !history.Any(record => record != null && record.PidHash == chosenHashes[candidate] &&
+                            (HistoryTimeUtc(record.CreateTime) >= childBirth ||
+                             (record.ExitTime.HasValue && HistoryTimeUtc(record.ExitTime.Value) < childBirth))))
                     .OrderByDescending(candidate => candidate.CreateTimeUtc)
                     .ThenByDescending(candidate => candidate.Pid)
                     .FirstOrDefault();
 
                 if (parent != null)
                 {
-                    DateTime parentCreateTimeUtc = parent.CreateTimeUtc.ToUniversalTime();
-                    parentPidHashes[processInfo] = genPidHash(parent.Pid, parentCreateTimeUtc.ToFileTimeUtc());
+                    parentPidHashes[processInfo] = chosenHashes[parent];
+                }
+                else
+                {
+                    ProcessRecord historicalParent = history.Where(record => record != null &&
+                        record.ProcessId == processInfo.ParentPid && !string.IsNullOrWhiteSpace(record.PidHash) &&
+                        HistoryTimeUtc(record.CreateTime) < childBirth &&
+                        (!record.ExitTime.HasValue || HistoryTimeUtc(record.ExitTime.Value) >= childBirth))
+                        .OrderByDescending(record => HistoryTimeUtc(record.CreateTime)).FirstOrDefault();
+                    if (historicalParent != null)
+                    {
+                        parentPidHashes[processInfo] = historicalParent.PidHash;
+                    }
                 }
             }
 
@@ -865,6 +1001,11 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
 
         internal bool ReplayBootTrace(string etlPath)
         {
+            if (!bootstrapReady)
+            {
+                log("Windows process boot replay skipped: bootstrap not initialized", LogLevel.Error);
+                return false;
+            }
             if (string.IsNullOrWhiteSpace(etlPath) || !File.Exists(etlPath))
             {
                 log($"Boot process trace ETL not found or unreadable at '{etlPath}'; skipping boot replay", LogLevel.Warn);
@@ -878,13 +1019,13 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 using var source = new ETWTraceEventSource(etlPath, TraceEventSourceType.FileOnly);
                 var parser = new KernelTraceEventParser(source);
                 parser.ProcessStart += data => HandleReplayedProcessTraceData(data, replayCounts);
-                parser.ProcessDCStart += data => HandleReplayedProcessTraceData(data, replayCounts);
+                log("Windows process boot replay uses actual ProcessStart only; DCStart is not replayed as birth", LogLevel.Info);
                 source.Process();
                 LogBootReplayComplete(
                     etlPath,
                     replayCounts.StartsEmitted,
                     replayCounts.DuplicatesSuppressed,
-                    replayCounts.ParentLinksRepaired);
+                    0);
                 return true;
             }
             catch (Exception ex)
@@ -919,6 +1060,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             catch (Exception ex)
             {
                 log($"Error handling replayed Windows process Start event: {ex.Message}", LogLevel.Debug);
+                throw;
             }
         }
 
@@ -958,22 +1100,61 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             }
 
             DateTime createTimeUtc = replayedStartTimestamp.ToUniversalTime();
-            if (TryGetDuplicateProcessInstance(pid, createTimeUtc, BootReplayMatchTolerance, out ProcessRecord existing))
+            replayedIdentities ??= new HashSet<string>(
+                (getProcessHistory() ?? Array.Empty<ProcessRecord>())
+                    .Where(record => record != null && !string.IsNullOrWhiteSpace(record.PidHash))
+                    .Select(record => record.PidHash), StringComparer.Ordinal);
+            string pidHash = genPidHash(pid, createTimeUtc.ToFileTimeUtc());
+            // Retained exact duplicates are still evidence of an actual Start in this pass.
+            observedReplayStartHashes.Add(pidHash);
+            if (replayedIdentities.Contains(pidHash))
             {
-                bool repaired = TryRepairDuplicateParentLinkage(existing, parentPid, createTimeUtc);
                 Interlocked.Increment(ref dedupSuppressedCount);
                 if (replayCounts != null)
                 {
                     replayCounts.DuplicatesSuppressed++;
-                    if (repaired)
-                    {
-                        replayCounts.ParentLinksRepaired++;
-                    }
                 }
                 return null;
             }
 
-            WintapMessage message = EmitStart(pid, parentPid, createTimeUtc, imageFileName, commandLine, sid, sidStatus);
+            CountSidStatus(sidStatus);
+            if (string.IsNullOrWhiteSpace(commandLine))
+            {
+                Interlocked.Increment(ref cmdlineEmptyCount);
+            }
+            string payloadPath = imageFileName ?? string.Empty;
+            string translatedPath = SafeInvoke(() => translateDevicePath(payloadPath));
+            string path = !string.IsNullOrWhiteSpace(translatedPath) ? translatedPath : payloadPath;
+            var enrichment = new ProcessFieldEnrichment
+            {
+                Name = GetProcessNameFromPathOrPayload(path, imageFileName),
+                Path = path,
+                CommandLine = commandLine ?? string.Empty,
+                User = sidStatus == SidParseStatus.Extracted && sid != null
+                    ? ResolveStartUser(pid, sid, sidStatus) : string.Empty
+            };
+            string parentHash = genPidHash(-1, 0);
+            if (parentPid == 4 && bootstrapReady)
+            {
+                parentHash = genPidHash(4, startupSeeds[0].CreateTimeUtc.ToFileTimeUtc());
+            }
+            else if (parentPid > 0 && parentPid != pid)
+            {
+                ProcessRecord parent = resolveProcessAtTime(parentPid, createTimeUtc);
+                if (parent != null && parent.ProcessId == parentPid &&
+                    HistoryTimeUtc(parent.CreateTime) < createTimeUtc &&
+                    (!parent.ExitTime.HasValue || HistoryTimeUtc(parent.ExitTime.Value) >= createTimeUtc) &&
+                    !string.IsNullOrWhiteSpace(parent.PidHash))
+                {
+                    parentHash = parent.PidHash;
+                }
+            }
+            if (parentHash == genPidHash(-1, 0))
+            {
+                log($"Windows process boot Start missing compatible parent evidence: pid={pid} parent_pid={parentPid}", LogLevel.Warn);
+            }
+            WintapMessage message = EmitStart(pid, parentPid, createTimeUtc, enrichment, parentHash);
+            replayedIdentities.Add(pidHash);
             Interlocked.Increment(ref bootReplayCount);
             if (replayCounts != null)
             {
@@ -1248,7 +1429,8 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             int pid,
             int parentPid,
             DateTime etwStartTimestamp,
-            ProcessFieldEnrichment enrichment)
+            ProcessFieldEnrichment enrichment,
+            string parentPidHash = null)
         {
             DateTime createTimeUtc = CanonicalizeCreateTimeUtc(pid, etwStartTimestamp);
             string processName = enrichment?.Name ?? string.Empty;
@@ -1267,7 +1449,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 {
                     PID = pid,
                     ParentPID = parentPid,
-                    ParentPidHash = string.Empty,
+                    ParentPidHash = parentPidHash ?? string.Empty,
                     Name = processName,
                     Path = processPath,
                     CommandLine = safeCommandLine,
@@ -1990,7 +2172,6 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         {
             public long StartsEmitted { get; set; }
             public long DuplicatesSuppressed { get; set; }
-            public long ParentLinksRepaired { get; set; }
         }
 
         [Flags]

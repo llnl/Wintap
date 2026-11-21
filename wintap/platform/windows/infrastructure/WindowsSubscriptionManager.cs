@@ -40,8 +40,11 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
         internal static readonly string[] OrderedPhases =
         {
             "EnableKernelProvider",
-            "InitializeProcessSnapshot",
+            "InitializeProcessBootstrap",
             "StartProcessSensor",
+            "ReplayBootProcessTrace",
+            "InitializeProcessSnapshotDelta",
+            "ValidateExplorerProcessLineage",
             "StartSharedKernelSensors",
             "StartKernelConsumer",
             "StartIndependentSensors"
@@ -92,7 +95,7 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
                 WintapLogger.Log.Append("Found Kernel trace flags on " + entry.Name + " flags: " + entry.Flags, LogLevel.Info);
             }
 
-            // Enable the shared kernel provider once with the complete final mask before snapshot/replay.
+            // Enable capture once with the final mask before bootstrap/replay/delta.
             kernelConsumerReady.Reset();
             kernelConsumerFailed.Reset();
             kernelConsumerFailure = null;
@@ -100,7 +103,7 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
             {
                 kernelSession = KernelSession.Instance;
                 kernelSession.EtwSession.EnableKernelProvider(kernelFlags);
-                WintapLogger.Log.Append("Live kernel capture enabled before snapshot/replay with flags: " + kernelFlags, LogLevel.Info);
+                WintapLogger.Log.Append("Live kernel capture enabled before bootstrap/replay/delta with flags: " + kernelFlags, LogLevel.Info);
             }
             catch (Exception ex)
             {
@@ -110,22 +113,22 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
 
             if (!kernelConsumerFailed.IsSet)
             {
-                // start unified process sensor first for process attribution
-                pc.InitializeSnapshotRefresh();
-                if (enableBootProcessTrace && bootReplayPath == null && pc.LastRefreshRebuiltFromSnapshot)
-                {
-                    WintapLogger.Log.Append(
-                        "SENSOR HEALTH: boot process trace was expected but absent; early-boot process lineage may be incomplete",
-                        LogLevel.Warn);
-                }
-                WintapLogger.Log.Append("Starting Windows process sensor", LogLevel.Info);
-                pc.Start();
-                WintapLogger.Log.Append("Windows process sensor started", LogLevel.Info);
-                if (bootReplayPath != null)
-                {
-                    pc.ReplayBootTrace(bootReplayPath);
-                }
-                pc.TryLogExplorerProcessLineageValidation();
+                ExecuteProcessStartup(
+                    enableBootProcessTrace,
+                    bootReplayPath,
+                    pc.InitializeStartupBootstrap,
+                    () =>
+                    {
+                        WintapLogger.Log.Append("Starting Windows process sensor", LogLevel.Info);
+                        pc.Start();
+                        WintapLogger.Log.Append("Windows process sensor started", LogLevel.Info);
+                    },
+                    pc.ReplayBootTrace,
+                    pc.InitializeSnapshotDelta,
+                    () => pc.TryLogExplorerProcessLineageValidation(),
+                    () => pc.LastRefreshRebuiltFromSnapshot,
+                    pc.GetQaCounterSnapshot,
+                    (message, level) => WintapLogger.Log.Append(message, level));
                 baseSensors.Add(pc);
 
                 foreach (CollectorStartupEntry entry in startupPlan.SharedKernelSensors)
@@ -197,6 +200,76 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
             }
 
             return baseSensors;
+        }
+
+        // The production phase runner is delegate-backed only to test ordering and
+        // degraded continuation without constructing ETW sessions or host inventory.
+        internal static void ExecuteProcessStartup(
+            bool enableBootProcessTrace,
+            string bootReplayPath,
+            Func<bool> bootstrap,
+            Action startProcessSensor,
+            Func<string, bool> replay,
+            Func<bool> snapshotDelta,
+            Action validateLineage,
+            Func<bool> rebuiltFromSnapshot,
+            Func<WindowsProcessQaCounters> getQaCounters,
+            Action<string, LogLevel> log)
+        {
+            bool bootstrapSucceeded = RunPhase(bootstrap, "bootstrap");
+            if (!bootstrapSucceeded)
+            {
+                log("Windows process startup bootstrap failed; skipping boot replay and snapshot delta in an uninitialized/reset-uncertain store; continuing live startup", LogLevel.Error);
+            }
+
+            if (enableBootProcessTrace && bootReplayPath == null && rebuiltFromSnapshot())
+            {
+                log("SENSOR HEALTH: boot process trace was expected but absent; early-boot process lineage may be incomplete", LogLevel.Warn);
+            }
+
+            // Preserve live subscriptions (including manifest metrics) even when
+            // bootstrap fails. Shared processing still waits until these phases end.
+            startProcessSensor();
+            string replayOutcome = bootstrapSucceeded
+                ? enableBootProcessTrace ? "unavailable" : "disabled"
+                : "skipped-bootstrap-failed";
+            bool replayFailed = false;
+            if (bootstrapSucceeded && enableBootProcessTrace && bootReplayPath != null)
+            {
+                replayFailed = !RunPhase(() => replay(bootReplayPath), "boot replay");
+                replayOutcome = replayFailed ? "failed-or-partial" : "succeeded";
+                if (replayFailed)
+                {
+                    log("Windows process startup boot replay degraded; retaining admitted Starts and continuing snapshot delta without clear or retry", LogLevel.Warn);
+                }
+            }
+
+            bool deltaSucceeded = bootstrapSucceeded && RunPhase(snapshotDelta, "snapshot delta");
+            if (bootstrapSucceeded && !deltaSucceeded)
+            {
+                log("Windows process startup snapshot delta failed; retaining bootstrap/replay history and continuing live startup", LogLevel.Warn);
+            }
+
+            validateLineage();
+            log(
+                $"Windows process startup summary: bootstrap={(bootstrapSucceeded ? "succeeded" : "failed")} " +
+                $"store={(bootstrapSucceeded ? rebuiltFromSnapshot() ? "reset" : "retained" : "uncertain")} " +
+                $"replay={replayOutcome} delta={(bootstrapSucceeded ? deltaSucceeded ? "succeeded" : "failed" : "skipped-bootstrap-failed")}; " +
+                WindowsProcessSensor.FormatQaCounterSnapshot(getQaCounters()),
+                !bootstrapSucceeded || replayFailed || !deltaSucceeded ? LogLevel.Warn : LogLevel.Info);
+
+            bool RunPhase(Func<bool> phase, string name)
+            {
+                try
+                {
+                    return phase();
+                }
+                catch (Exception ex)
+                {
+                    log($"Windows process startup {name} threw: {ex.Message}", LogLevel.Error);
+                    return false;
+                }
+            }
         }
 
         internal void Stop()
