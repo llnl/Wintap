@@ -5,6 +5,8 @@ using Xunit;
 
 namespace Wintap.Tests
 {
+    [Trait("TestKind", "unit")]
+    [Trait("Execution", "synthetic")]
     public class BoundedEventTimeCacheTests
     {
         [Fact, Trait("Category", "pai-01"), Trait("Category", "pai-03")]

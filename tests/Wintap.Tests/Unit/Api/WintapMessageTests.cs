@@ -4,6 +4,8 @@ using Xunit;
 
 namespace Wintap.Tests
 {
+    [Trait("TestKind", "unit")]
+    [Trait("Execution", "synthetic")]
     public class WintapMessageTests
     {
         [Fact]

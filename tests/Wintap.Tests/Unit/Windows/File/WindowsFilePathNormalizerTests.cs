@@ -6,6 +6,8 @@ using Xunit;
 namespace Wintap.Tests
 {
  [Trait("Category", "fio-04")]
+ [Trait("TestKind", "unit")]
+ [Trait("Execution", "synthetic")]
  public class WindowsFilePathNormalizerTests
  {
   internal static WindowsFileVolumeMap Map => new WindowsFileVolumeMap(new[] {
