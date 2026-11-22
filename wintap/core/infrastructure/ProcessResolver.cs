@@ -195,14 +195,22 @@ namespace gov.llnl.wintap.core.infrastructure
                 string.Equals(pidHash, "Unknown", StringComparison.OrdinalIgnoreCase) ||
                 pidHash == processHash.GenPidHash(-1, 0))
                 return new AttributedProcessPath(null, "missing_identity");
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverReadAttributedPath);
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             if (!System.Threading.Monitor.TryEnter(_dbLock, 20))
+            {
+                lockWaitTiming.Stop();
                 return new AttributedProcessPath(null, "resolver_busy");
+            }
+            lockWaitTiming.Stop();
             try
             {
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 using var command = connection.CreateCommand();
                 command.CommandText = "SELECT image_path FROM process WHERE pid_hash=$hash AND process_id=$pid LIMIT 1";
                 command.Parameters.Add(new DuckDBParameter("hash", pidHash));
                 command.Parameters.Add(new DuckDBParameter("pid", pid));
+                using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlOther, reportWhenStopped: false);
                 using var reader = command.ExecuteReader();
                 if (!reader.Read()) return new AttributedProcessPath(null, "identity_not_found");
                 string path = reader.IsDBNull(0) ? null : reader.GetString(0);
@@ -216,15 +224,23 @@ namespace gov.llnl.wintap.core.infrastructure
                 return full ? new AttributedProcessPath(path, "stored_identity") :
                     new AttributedProcessPath(null, "path_not_full");
             }
-            catch { return new AttributedProcessPath(null, "lookup_failed"); }
+            catch
+            {
+                operationTiming.MarkFailed();
+                return new AttributedProcessPath(null, "lookup_failed");
+            }
             finally { System.Threading.Monitor.Exit(_dbLock); }
         }
 
         /// <summary>Resolve process information at a specific time.</summary>
         public ProcessRecord ResolveProcessAtTime(int pid, DateTime eventTime)
         {
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverResolveAtTime);
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             lock (_dbLock)
             {
+                lockWaitTiming.Stop();
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 MaybeRunMaintenanceLocked(_maintenanceClock());
                 string query = null;
                 try
@@ -236,6 +252,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     command.Parameters.Add(new DuckDBParameter("process_id", pid));
                     command.Parameters.Add(new DuckDBParameter("event_time", eventTime.ToUniversalTime()));
 
+                    using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlResolveAtTime, reportWhenStopped: false);
                     using var reader = command.ExecuteReader();
 
                     if (!reader.Read())
@@ -265,6 +282,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 }
                 catch (Exception ex)
                 {
+                    operationTiming.MarkFailed();
                     // Dig deep into the exception
                     Console.WriteLine($"=== EXCEPTION DETAILS ===");
                     Console.WriteLine($"Type: {ex.GetType().FullName}");
@@ -380,9 +398,13 @@ namespace gov.llnl.wintap.core.infrastructure
 
         public ProcessRecord ResolveRegistryTeardownProcess(int pid, DateTime eventTime)
         {
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverRegistryTeardown);
             DateTime utc = eventTime.ToUniversalTime();
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             lock (_dbLock)
             {
+                lockWaitTiming.Stop();
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 using var command = connection.CreateCommand();
                 // Select the latest *start*, not the nearest exit: an intervening reused PID
                 // must prevent attribution to an older instance, even if it has also exited.
@@ -392,6 +414,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     ORDER BY create_time DESC LIMIT 2";
                 command.Parameters.Add(new DuckDBParameter("pid", pid));
                 command.Parameters.Add(new DuckDBParameter("event_time", utc));
+                using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlOther, reportWhenStopped: false);
                 using var reader = command.ExecuteReader();
                 if (!reader.Read() || reader.IsDBNull(0) || reader.IsDBNull(1) || reader.IsDBNull(3)) return null;
                 var owner = new ProcessRecord {
@@ -444,8 +467,12 @@ namespace gov.llnl.wintap.core.infrastructure
         /// </summary>
         public bool ProcessExistsForPid(int pid, long eventTime)
         {
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverProcessExists);
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             lock (_dbLock)
             {
+                lockWaitTiming.Stop();
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 MaybeRunMaintenanceLocked(_maintenanceClock());
                 var query = $@"
                     SELECT COUNT(*) 
@@ -455,6 +482,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 using var command = connection.CreateCommand();
                 command.CommandText = query;
 
+                using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlOther, reportWhenStopped: false);
                 var count = (long)command.ExecuteScalar();
 
                 return count > 0;
@@ -596,13 +624,17 @@ namespace gov.llnl.wintap.core.infrastructure
                 return;
             }
 
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverRegisterProcess);
             var proc = message.Process;
 
             // Convert EventTime (FileTime format) to DateTime
             var createTime = DateTime.FromFileTimeUtc(message.EventTime).ToUniversalTime();
 
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             lock (_dbLock)
             {
+                lockWaitTiming.Stop();
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 MaybeRunMaintenanceLocked(_maintenanceClock());
                 string rawPidHash = message.PidHash ?? string.Empty;
                 string pidHash = EscapeSql(rawPidHash);
@@ -637,6 +669,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     updateCmd.Parameters.Add(new DuckDBParameter("exit_time", exitTime));
                     try
                     {
+                        using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlRegisterProcess, reportWhenStopped: false);
                         var rows = updateCmd.ExecuteNonQuery();
                         if (rows == 0)
                         {
@@ -654,6 +687,7 @@ namespace gov.llnl.wintap.core.infrastructure
                     }
                     catch (Exception ex)
                     {
+                        operationTiming.MarkFailed();
                         LogRegistrationOrClear(
                             $"DuckDB updating exit for PID {message.PID} {proc.Name}: {ex.Message}",
                             LogLevel.Error);
@@ -683,6 +717,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 }
                 catch (Exception ex)
                 {
+                    operationTiming.MarkFailed();
                     LogRegistrationOrClear(
                         $"DuckDB registering PID {message.PID} {proc.Name}: {ex.Message}",
                         LogLevel.Error);
@@ -692,6 +727,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
         internal static bool UpsertProcessStart(DuckDBConnection connection, WintapMessage message, DateTime createTime)
         {
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverUpsertProcessStart);
             WintapMessage.ProcessObject proc = message.Process;
             // A birth record is provisional inherited metadata. It may arrive
             // after Exec/Refresh/Stop on a different poller; never replace an
@@ -701,6 +737,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 using var existing = connection.CreateCommand();
                 existing.CommandText = "SELECT COUNT(*) FROM process WHERE pid_hash = $pid_hash";
                 existing.Parameters.Add(new DuckDBParameter("pid_hash", message.PidHash ?? string.Empty));
+                using var sqlCloneLookupTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlRegisterProcess, reportWhenStopped: false);
                 if (Convert.ToInt64(existing.ExecuteScalar()) != 0)
                     return false;
             }
@@ -753,6 +790,7 @@ namespace gov.llnl.wintap.core.infrastructure
             command.Parameters.Add(new DuckDBParameter("user_name", proc.User ?? string.Empty));
             command.Parameters.Add(new DuckDBParameter("md5_hash", string.IsNullOrEmpty(proc.MD5) ? DBNull.Value : proc.MD5));
             command.Parameters.Add(new DuckDBParameter("sha2_hash", string.IsNullOrEmpty(proc.SHA2) ? DBNull.Value : proc.SHA2));
+            using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlRegisterProcess, reportWhenStopped: false);
             command.ExecuteNonQuery();
             return true;
         }
@@ -1083,6 +1121,22 @@ namespace gov.llnl.wintap.core.infrastructure
                 connection = new DuckDBConnection($"Data Source={MAIN_DB_PATH}");
                 connection.Open();
 
+                // Canary-only control for diagnosing DuckDB worker-side contention.
+                // The default remains DuckDB's configured thread count.
+                string resolverThreadLimit = Environment.GetEnvironmentVariable("WINTAP_DUCKDB_RESOLVER_THREADS");
+                if (!string.IsNullOrWhiteSpace(resolverThreadLimit))
+                {
+                    if (!int.TryParse(resolverThreadLimit, NumberStyles.Integer, CultureInfo.InvariantCulture, out int threadLimit) || threadLimit < 1)
+                    {
+                        throw new InvalidOperationException("WINTAP_DUCKDB_RESOLVER_THREADS must be a positive integer when set.");
+                    }
+
+                    using var threadLimitCommand = connection.CreateCommand();
+                    threadLimitCommand.CommandText = $"SET threads = {threadLimit}";
+                    threadLimitCommand.ExecuteNonQuery();
+                    WintapLogger.Log.Append($"DuckDB resolver thread limit set to {threadLimit}", LogLevel.Info);
+                }
+
                 EnsureEventStoreTables(connection);
                 WintapLogger.Log.Append("Process database initialized successfully", LogLevel.Info);
             }
@@ -1152,6 +1206,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 LIMIT 1";
             command.Parameters.Add(new DuckDBParameter("process_id", pid));
             command.Parameters.Add(new DuckDBParameter("event_time", eventTime.ToUniversalTime()));
+            using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlGetPidHash, reportWhenStopped: false);
             return command.ExecuteScalar()?.ToString();
         }
 
@@ -1165,10 +1220,14 @@ namespace gov.llnl.wintap.core.infrastructure
         public string GetPidHash(int pid, DateTime createTime)
         {
             if (TryResolveExitIdentityEvidence(pid, createTime, out var exitEvidence)) return exitEvidence.PidHash;
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverGetPidHash);
             try
             {
+                var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
                 lock (_dbLock)
                 {
+                    lockWaitTiming.Stop();
+                    using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                     MaybeRunMaintenanceLocked(_maintenanceClock());
 
                     var result = ResolveStoredPidHashAtTime(connection, pid, createTime);
@@ -1196,6 +1255,7 @@ namespace gov.llnl.wintap.core.infrastructure
             }
             catch (Exception ex)
             {
+                operationTiming.MarkFailed();
                 WintapLogger.Log.Append(
                     $"No pidhash found for PID {pid} at or before {createTime:yyyy-MM-dd HH:mm:ss}: {ex.Message}",
                     LogLevel.Error);
@@ -1367,6 +1427,7 @@ namespace gov.llnl.wintap.core.infrastructure
         /// <returns>List of all ProcessRecord objects in the database</returns>
         public List<ProcessRecord> GetAllProcesses()
         {
+            using var operationTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverGetAllProcesses);
             var query = @"
                SELECT pid_hash, parent_pid_hash, process_id, parent_process_id, 
                process_name, image_path, command_line, create_time, 
@@ -1376,12 +1437,16 @@ namespace gov.llnl.wintap.core.infrastructure
 
             var processes = new List<ProcessRecord>();
 
+            var lockWaitTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockWait, reportWhenStopped: false);
             lock (_dbLock)
             {
+                lockWaitTiming.Stop();
+                using var lockHoldTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverDbLockHold, reportWhenStopped: false);
                 MaybeRunMaintenanceLocked(_maintenanceClock());
                 using var command = connection.CreateCommand();
                 command.CommandText = query;
 
+                using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlOther, reportWhenStopped: false);
                 using var reader = command.ExecuteReader();
 
                 while (reader.Read())
@@ -1763,6 +1828,7 @@ namespace gov.llnl.wintap.core.infrastructure
                 WHERE pid_hash = '{escapedPidHash}'
                 LIMIT 1";
 
+            using var sqlTiming = DuckDbOperationMetrics.Start(DuckDbOperation.ResolverSqlOther, reportWhenStopped: false);
             using var reader = command.ExecuteReader();
             if (!reader.Read())
             {

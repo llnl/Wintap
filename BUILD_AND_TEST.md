@@ -125,6 +125,7 @@ This avoids .NET apphost mmap failures and shared-mount runtime-codegen issues.
 - `WINTAP_SKIP_PARENT_PROCESS_RESOLVE`
 - `WINTAP_SKIP_PROCESS_REGISTER`
 - `WINTAP_SKIP_ESPER_SEND`
+- `WINTAP_DUCKDB_RESOLVER_THREADS`: optional positive DuckDB thread limit for the process resolver connection; unset preserves DuckDB's default. Intended for controlled profiling experiments.
 
 ## Common Linux Isolation Recipes
 

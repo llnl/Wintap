@@ -130,7 +130,7 @@ need separate qualification; incomplete raw observations are not retroactively f
 With the collector **already running**, generate a tiny identifiable dataset:
 
 ```bash
-python3 devtools/telemetry_smoke_workload.py --output /home/user/qa/smoke-001
+python3 devtools/telemetry_smoke_workload.py --output "$PRIVATE_QA/smoke-001"
 ```
 
 Stdlib only, no root required, no collector configuration changes, no external
@@ -158,9 +158,9 @@ For explicit legacy clone/clone3 process/thread, worker-thread fork, and vfork+e
 probes, build the optional existing native helper:
 
 ```bash
-cc -O2 -pthread -o /home/user/qa/clone-helper devtools/clone_lifecycle_workload.c
-python3 devtools/telemetry_smoke_workload.py --output /home/user/qa/smoke-002 \
-  --clone-helper /home/user/qa/clone-helper
+cc -O2 -pthread -o "$PRIVATE_QA/clone-helper" devtools/clone_lifecycle_workload.c
+python3 devtools/telemetry_smoke_workload.py --output "$PRIVATE_QA/smoke-002" \
+  --clone-helper "$PRIVATE_QA/clone-helper"
 ```
 
 Only one native round runs; naming/extras are enabled by `WINTAP_SMOKE_NAMES=1`
@@ -325,8 +325,140 @@ Optional: increase the number of short-lived children (helps exercise parent att
 The captured local endpoint should show the host/VM's routable local address with ephemeral ports, for example:
 
 ```text
-local=192.168.252.9:37804 -> remote=104.20.23.154:80 proto=TCP rows=2
+local=<assigned-IP>:<local-port> -> remote=<probe-IP>:<remote-port> proto=TCP rows=2
 ```
+
+## Debug-output privacy
+
+All debug outputs belong outside Git. Raw logs, packet/eBPF traces, parquet,
+databases, smoke manifests, baseline command dumps, and detailed perf reports can
+contain hostnames, account/source paths, command lines, endpoints, and event IDs.
+Existing validation tools retain those selectors intentionally; their output is
+not anonymized. Log clustering/normalization is not a privacy guarantee. Keep
+outputs private and local; publish only reviewed aggregates, never credentials or
+complete environments. Do not upload CPU investigation data to S3.
+
+## Linux Lintap CPU profiling
+
+Concise findings and the next experiment: [LINTAP_CPU_FINDINGS.md](LINTAP_CPU_FINDINGS.md).
+
+`profile_lintap_cpu.sh` attaches Linux `perf` to an explicitly selected, already
+running Lintap PID. It requests user and kernel call stacks; kernel frames depend
+on perf permissions and kernel configuration. It does not launch, stop, or signal
+the process, and it does not install software. Use it on a separate canary process,
+not the installed service. It requires `perf` and sufficient permissions (usually
+root). Each capture goes into a new mode-0700 directory. The script does not log
+SQL or query parameters, but raw DWARF stack samples can contain sensitive process
+memory; keep `perf.data` private.
+
+For managed/JIT method names, enable .NET perf maps **before launching** the canary.
+Keep the same canary command, configuration, and `WINTAP_DUCKDB_DIAGNOSTICS=1` as
+the run being investigated, adding these environment variables to that launch:
+
+```bash
+sudo env \
+  WINTAP_DUCKDB_DIAGNOSTICS=1 \
+  DOTNET_PerfMapEnabled=1 \
+  COMPlus_PerfMapEnabled=1 \
+  dotnet "$CANARY_DLL"
+```
+
+In another terminal, use the PID from the canary's startup log (the `self PID
+filter set to pid=...` message) and capture the steady-state window:
+
+```bash
+sudo devtools/profile_lintap_cpu.sh \
+  --pid "$CANARY_PID" \
+  --duration 300 \
+  --frequency 99 \
+  --output "$PRIVATE_CAPTURE"
+```
+
+The profiler attaches only to that PID and leaves it running when capture ends.
+Do not run a second collector against the same data or runtime root; the resolver
+database is under `WINTAP_RUNTIME_ROOT`, not `WINTAP_DATA_ROOT`. For matched CPU
+tests, stop other collectors yourself and configure both isolated roots.
+
+Generate text reports from the resulting capture:
+
+```bash
+sudo devtools/report_lintap_cpu_profile.sh \
+  "$PRIVATE_CAPTURE"
+```
+
+This creates a fresh `analysis-*` directory containing `self-time.txt` and
+`call-chains.txt`. To also produce a FlameGraph SVG, install/use the existing
+FlameGraph scripts on `PATH` and add `--flamegraph`. Keep `perf.data` and the
+report outputs private and outside Git; neither script uploads data. Interpret
+startup separately from steady state. Set the example variables to your local
+canary DLL, PID, and a fresh private capture directory before running.
+
+### Scripted host comparison (root, opt-in)
+
+`lintap_cpu_investigation.py` implements three priorities using Python 3.6+ and
+the standard library: environment inventory, privileged reports for existing
+captures, and default → one-thread → default canaries. Run it as root. It never
+changes FIPS/sysctl settings, installs software, touches the installed collector's
+database, or changes `lintap-pidstat.service`. Compare refuses to proceed unless
+that service is disabled/inactive (or absent) and no other Lintap process is running.
+It stops **only** canaries it created, including on interruption; shutdown escalates
+to SIGKILL for its own process group after 30 seconds if graceful termination fails.
+
+```bash
+SCRIPT=devtools/lintap_cpu_investigation.py
+
+# Set REPORT_OWNER, REPORT_ROOT, CANARY_DLL, and DOTNET to your installation.
+# REPORT_ROOT must be outside Git; the DLL needs its complete dependency bundle.
+sudo python3 "$SCRIPT" inventory --owner "$REPORT_OWNER" --output "$REPORT_ROOT" \
+  --dll "$CANARY_DLL" --dotnet "$DOTNET"
+# Optional inventory --pid PID reads selected configuration/affinity, never signals it.
+# Optional --runtime-root PATH records filesystem and database/WAL sizes, not their contents.
+
+# Re-report existing captures on their original host, with kernel-symbol privileges.
+sudo python3 "$SCRIPT" report-existing --owner "$REPORT_OWNER" --output "$REPORT_ROOT" \
+  --profile "$PRIVATE_CAPTURE"
+
+# Stop the existing collector yourself first.
+sudo python3 "$SCRIPT" compare --owner "$REPORT_OWNER" --output "$REPORT_ROOT" \
+  --dll "$CANARY_DLL" --dotnet "$DOTNET"
+```
+
+No account or canary artifact path is hardcoded. The runtime defaults to `dotnet`
+on PATH; select the same complete bundle and runtime for all comparisons.
+Every invocation creates a unique mode/random directory without host identity.
+**All captures, application copies, databases, and parquet remain on local disk**
+under `--local-work-root` (default `/tmp/opencode`, outside Git);
+NFS must not be the live runtime/data/capture filesystem. Publishing happens after
+the run: root streams only aggregates through a pipe to a `runuser -u "$REPORT_OWNER"`
+tar extractor on NFS. This supports both root-only local ancestors and NFS
+root-squash without opening permissions on local work directories. It changes
+ownership only on its newly created results subtree and published directory,
+never on the whole output root. The owner must be able to access the destination;
+local work directories may remain root-only.
+
+Compare takes roughly 19–25 minutes: each leg verifies its startup, warms up for
+60 seconds, then measures for 300 seconds at 99 Hz. Override `--warmup`, `--duration`,
+or `--frequency` for all legs together. It copies the existing application locally,
+removes upload adapters from the private config, and starts with a clean environment
+and fresh data/runtime roots per leg. Sensors, resolver and normal ETL stay enabled;
+MCP, DuckDB UI, and settings overrides are disabled. The one-thread leg must log
+`DuckDB resolver thread limit set to 1` before measurement; this caps only the
+resolver instance, not the ETL writer's separate in-memory DuckDB instances.
+
+Shared outputs include CPU-seconds/average cores, CPU/RSS/thread samples,
+allowlisted configuration/version/hash inventory, numeric operation/pipeline
+counters, fixed-label profile summaries, and completion status. **Detailed perf
+reports, raw perf/logs, databases, and parquet remain private and local.** Exported
+reports omit hostnames, boot IDs, selected PIDs, absolute paths, raw command output,
+SQL, query parameters, event identifiers, credentials, and complete environments.
+Failed runs publish partial aggregates marked incomplete; errors stay on the console.
+
+An unresolved kernel-address percentage is explicitly reported: absence of named
+`osq_lock`/DRBG frames is not evidence of absence while kernel symbols are unresolved.
+Old captures may require symbols/build IDs from their original kernel/boot.
+Fresh-state comparisons cannot alone explain accumulated-state degradation. Use
+equivalent private, stopped-database snapshots in a separate follow-up experiment;
+this script intentionally never copies or opens the installed event store.
 
 ## File Activity Smoke Test
 
@@ -341,7 +473,7 @@ To run only the endpoint cases, without Internet HTTP/DNS stimulus:
 
 ```bash
 uv run --no-project --with duckdb python devtools/network_endpoint_smoke_test.py \
-  --data-root /var/log/lintap/data --host-ip 192.168.252.47 --timeout 120
+  --data-root /var/log/lintap/data --host-ip "$ASSIGNED_HOST_IP" --timeout 120
 ```
 
 Omit `--host-ip` to choose the host's routed IPv4 interface. This must be an assigned

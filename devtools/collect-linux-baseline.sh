@@ -3,10 +3,25 @@ set -u
 
 ROOT_DIR="$(pwd)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-HOST="$(hostname 2>/dev/null || printf unknown)"
-OUT_DIR="${BASELINE_OUT_DIR:-/tmp/wintap-baseline-${HOST}-${STAMP}}"
+OUT_DIR="${BASELINE_OUT_DIR:-/tmp/wintap-baseline-${STAMP}}"
 RESULTS="${OUT_DIR}/results.jsonl"
 
+# Raw baseline command output can expose host identity and source paths.
+# Keep it private and outside Git; environment values are never dumped.
+umask 077
+mkdir -p "$(dirname -- "${OUT_DIR}")"
+ancestor=$(cd -- "$(dirname -- "${OUT_DIR}")" && pwd -P)
+while [[ "$ancestor" != / ]]; do
+  if [[ -e "$ancestor/.git" ]]; then
+    printf 'ERROR: baseline outputs must be outside Git worktrees\n' >&2
+    exit 2
+  fi
+  ancestor=$(dirname -- "$ancestor")
+done
+if [[ -e "$OUT_DIR" || -e "${OUT_DIR}.tar.gz" ]]; then
+  printf 'ERROR: choose a fresh baseline output directory\n' >&2
+  exit 2
+fi
 mkdir -p "${OUT_DIR}/commands" "${OUT_DIR}/logs"
 
 json_escape() {
@@ -68,7 +83,7 @@ run_cmd "which-dotnet" bash -lc 'which dotnet 2>/dev/null; readlink -f "$(which 
 run_cmd "dotnet-info" bash -lc 'dotnet --info 2>&1 || true'
 run_cmd "dotnet-sdks" bash -lc 'dotnet --list-sdks 2>&1 || true'
 run_cmd "dotnet-runtimes" bash -lc 'dotnet --list-runtimes 2>&1 || true'
-run_cmd "dotnet-environment" bash -lc 'env | sort | grep -E "^(DOTNET|CORECLR|COMPlus|NUGET|MSBuild|ASPNETCORE)_" || true'
+emit "skip" "dotnet-environment" "ok" "Environment values omitted: they may contain credentials."
 
 run_cmd "dpkg-dotnet-libbpf-duckdb" bash -lc 'dpkg-query -W -f="${Package}\t${Version}\t${Architecture}\n" "dotnet*" "aspnetcore*" "libbpf*" "bpftool" "clang*" "llvm*" "libduckdb*" "duckdb*" "libc6" 2>/dev/null | sort || true'
 run_cmd "apt-policy-dotnet" bash -lc 'apt-cache policy dotnet-sdk-10.0 dotnet-runtime-10.0 aspnetcore-runtime-10.0 2>/dev/null || true'
@@ -117,4 +132,4 @@ emit "meta" "tarball" "ok" "${tarball}"
 
 printf 'WINTAP_BASELINE_RESULTS=%s\n' "${RESULTS}"
 printf 'WINTAP_BASELINE_TARBALL=%s\n' "${tarball}"
-printf 'Paste back %s or attach %s.\n' "${RESULTS}" "${tarball}"
+printf 'Keep raw baseline private; share only reviewed, anonymized findings.\n'

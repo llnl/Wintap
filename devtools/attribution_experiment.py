@@ -144,7 +144,14 @@ def main():
             env.update(WINTAP_ENABLE_CLONE_SENSOR='false', WINTAP_ENABLE_EXECVE_SENSOR='false',
                        WINTAP_ENABLE_PROCESS_RUNDOWN_SENSOR='false')
         result = dict(round=index, name=name, missing_birth_injection=missing_birth, data_root=str(data),
-                      runtime_root=str(runtime), qa_root=str(qa), env_overrides={k: v for k, v in env.items() if k.startswith('WINTAP_')})
+                      runtime_root=str(runtime), qa_root=str(qa), env_overrides={k: env[k] for k in (
+                          'WINTAP_DISABLE_MCP', 'WINTAP_DISABLE_DUCKDB_UI',
+                          'WINTAP_ETL_SERIALIZATION_INTERVAL_SEC', 'WINTAP_ETL_UPLOAD_INTERVAL_SEC',
+                          'WINTAP_ENABLE_NETWORK_SENSOR', 'WINTAP_ENABLE_SELINUX_SENSOR',
+                          'WINTAP_EXPERIMENT_EXIT_IDENTITY_RECOVERY', 'WINTAP_EXPERIMENT_DRAIN_BATCH_WINDOWS',
+                          'WINTAP_ENABLE_CLONE_SENSOR', 'WINTAP_ENABLE_EXECVE_SENSOR',
+                          'WINTAP_ENABLE_PROCESS_RUNDOWN_SENSOR') if k in env and
+                          (env[k] in ('true', 'false') or env[k].isdigit())})
         result.update(settle_seconds=args.settle_seconds, shutdown_timeout_seconds=args.shutdown_timeout,
                        stop_signal=args.stop_signal, candidate_self_contained=args.candidate_self_contained,
                        experiment_exit_recovery=args.experiment_exit_recovery,

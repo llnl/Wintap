@@ -17,10 +17,10 @@ Prerequisites:
 
 Examples:
   python3 wintap/devtools/network_capture_smoke_test.py \
-      --data-root /home/ubuntu/data/lintap/deb-pkg \
+      --data-root "$DATA_ROOT" \
       --timeout 180
 
-  WINTAP_DATA_ROOT=/home/ubuntu/data/lintap/deb-pkg \
+  WINTAP_DATA_ROOT="$DATA_ROOT" \
       python3 wintap/devtools/network_capture_smoke_test.py --timeout 180
 """
 
