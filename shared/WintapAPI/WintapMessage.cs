@@ -235,6 +235,24 @@ namespace gov.llnl.wintap.collect.models
             public string UniqueProcessKey { get; set; }
             public string MD5 { get; set; }
             public string SHA2 { get; set; }
+
+            /// <summary>
+            /// UTC observation/occurrence time represented as a Windows FILETIME.
+            /// This is independent of the canonical process birth in EventTime.
+            /// </summary>
+            public long? ObservationTimeFileTimeUtc { get; set; }
+
+            /// <summary>
+            /// Exact producer-supplied monotonic timestamp in nanoseconds, when
+            /// available. Its scope is identified by ObservationRunId.
+            /// </summary>
+            public long? ObservationTimeMonotonicNanoseconds { get; set; }
+
+            /// <summary>Clock source for the observation timestamp.</summary>
+            public string ObservationClockDomain { get; set; }
+
+            /// <summary>Capture-run scope for monotonic timestamp comparison.</summary>
+            public string ObservationRunId { get; set; }
         }
 
         public class TcpConnectionObject : WintapBase

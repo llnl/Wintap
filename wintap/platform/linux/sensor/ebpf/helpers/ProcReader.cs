@@ -407,20 +407,7 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         private static void ReadExe(string procDir, ref ProcessInfo info)
         {
-            var exePath = $"{procDir}/exe";
-            try
-            {
-                var fileInfo = new FileInfo(exePath);
-                if (fileInfo.Exists)
-                {
-                    info.ExecutablePath = fileInfo.LinkTarget ?? fileInfo.FullName;
-                }
-            }
-            catch
-            {
-                // Permission denied or not a symlink
-                info.ExecutablePath = null;
-            }
+            info.ExecutablePath = ProcessSensorHelper.ReadExecutableLink($"{procDir}/exe");
         }
 
         private static DateTime GetBootTimeUtc()

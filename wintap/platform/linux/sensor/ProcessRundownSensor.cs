@@ -5,7 +5,6 @@ using gov.llnl.wintap.core.shared;
 using gov.llnl.wintap.core.shared.helpers;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace gov.llnl.wintap.platform.linux.collect
@@ -18,20 +17,66 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal class ProcessRundownSensor : BaseSensor
     {
         private readonly ProcessHash pidHashGenerator;
+        private readonly Func<IEnumerable<ProcReader.ProcessInfo>> enumerateProcesses;
+        private readonly Action<WintapMessage> emit;
+        private readonly Func<DateTime> utcNow;
+        private readonly Action<string, LogLevel> log;
+        private readonly ProcessRefreshSchedule refreshSchedule;
+        private PeriodicProcessRefreshScheduler refreshScheduler;
 
-        internal ProcessRundownSensor()
+        internal ProcessRundownSensor(
+            Func<IEnumerable<ProcReader.ProcessInfo>> enumerateProcesses = null,
+            Action<WintapMessage> emit = null,
+            Func<DateTime> utcNow = null,
+            ProcessRefreshSchedule refreshSchedule = null,
+            Action<string, LogLevel> log = null)
         {
             SensorName = "ProcessRundown";
             pidHashGenerator = new ProcessHash();
+            this.enumerateProcesses = enumerateProcesses ?? ProcReader.EnumerateProcesses;
+            this.emit = emit ?? EventChannel.Send;
+            this.utcNow = utcNow ?? (() => DateTime.UtcNow);
+            this.refreshSchedule = refreshSchedule;
+            this.log = log ?? ((message, level) => WintapLogger.Log.Append(message, level));
         }
 
         public override bool Start()
         {
             try
             {
-                WintapLogger.Log.Append("Linux process rundown starting", LogLevel.Info);
+                bool started = RunSnapshot("startup rundown");
+                if (!started)
+                    return false;
 
-                List<ProcReader.ProcessInfo> processes = ProcReader.EnumerateProcesses()
+                refreshScheduler = new PeriodicProcessRefreshScheduler(
+                    refreshSchedule ?? ProcessRefreshSchedule.FromConfig(),
+                    () => RunSnapshot("periodic inventory"),
+                    utcNow,
+                    log);
+                refreshScheduler.Start();
+                return started;
+            }
+            catch (Exception ex)
+            {
+                log($"Linux process rundown failed: {ex.Message}", LogLevel.Error);
+                log($"Linux process rundown stack trace: {ex.StackTrace}", LogLevel.Debug);
+                return false;
+            }
+        }
+
+        public override void Stop()
+        {
+            refreshScheduler?.Dispose();
+            refreshScheduler = null;
+        }
+
+        internal bool RunSnapshot(string reason)
+        {
+            try
+            {
+                DateTime observationUtc = utcNow().ToUniversalTime();
+                log($"Linux process {reason} starting at {observationUtc:O}", LogLevel.Info);
+                List<ProcReader.ProcessInfo> processes = enumerateProcesses()
                     .Where(IsUsableProcess)
                     .OrderBy(p => p.StartTimeUtc == default ? DateTime.MinValue : p.StartTimeUtc)
                     .ThenBy(p => p.Pid)
@@ -40,23 +85,21 @@ namespace gov.llnl.wintap.platform.linux.collect
                 int sent = 0;
                 foreach (ProcReader.ProcessInfo processInfo in processes)
                 {
-                    WintapMessage message = CreateRefreshMessage(processInfo);
+                    WintapMessage message = CreateRefreshMessage(processInfo, observationUtc);
                     if (message == null)
-                    {
                         continue;
-                    }
 
-                    EventChannel.Send(message);
+                    emit(message);
                     sent++;
                 }
 
-                WintapLogger.Log.Append($"Linux process rundown complete. Refreshed {sent} existing processes from /proc", LogLevel.Info);
+                log($"Linux process {reason} complete. Refreshed {sent} existing processes from /proc; observed_at={observationUtc:O}", LogLevel.Info);
                 return true;
             }
             catch (Exception ex)
             {
-                WintapLogger.Log.Append($"Linux process rundown failed: {ex.Message}", LogLevel.Error);
-                WintapLogger.Log.Append($"Linux process rundown stack trace: {ex.StackTrace}", LogLevel.Debug);
+                log($"Linux process {reason} failed: {ex.Message}", LogLevel.Error);
+                log($"Linux process {reason} stack trace: {ex.StackTrace}", LogLevel.Debug);
                 return false;
             }
         }
@@ -73,6 +116,11 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         internal WintapMessage CreateRefreshMessage(ProcReader.ProcessInfo processInfo)
         {
+            return CreateRefreshMessage(processInfo, utcNow().ToUniversalTime());
+        }
+
+        internal WintapMessage CreateRefreshMessage(ProcReader.ProcessInfo processInfo, DateTime observationUtc)
+        {
             if (!IsUsableProcess(processInfo) || processInfo.StartTimeUtc == default)
             {
                 // Snapshot time is not process birth; do not fabricate an instance.
@@ -82,19 +130,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
             int pid = (int)processInfo.Pid;
             string commandLine = processInfo.CommandLine ?? string.Empty;
-            string executablePath = ResolveExecutablePath(processInfo.ExecutablePath);
-            if (string.IsNullOrWhiteSpace(executablePath))
-            {
-                executablePath = !string.IsNullOrWhiteSpace(commandLine)
-                    ? ProcessSensorHelper.ExtractPathFromCmdline(commandLine)
-                    : processInfo.Name;
-            }
-
+            string executablePath = ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath) ?? "unknown-5";
             string processName = ProcessSensorHelper.ExtractProcessName(executablePath, processInfo.Name);
-            if (string.IsNullOrWhiteSpace(processName) || processName.StartsWith("unknown", StringComparison.OrdinalIgnoreCase))
-            {
-                processName = ProcessSensorHelper.ExtractProcessNameFromCmdline(commandLine, processInfo.Name);
-            }
 
             var message = new WintapMessage(startTimeUtc, pid, WintapMessage.MessageTypeEnum.Process)
             {
@@ -113,37 +150,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                 user: processInfo.Username ?? processInfo.Uid.ToString(),
                 arguments: BuildArguments(processInfo)
             );
+            message.Process.ObservationTimeFileTimeUtc = observationUtc.ToUniversalTime().ToFileTimeUtc();
+            message.Process.ObservationClockDomain = "userspace-utc";
+            message.Process.ObservationRunId = RuntimeCapabilities.GetCaptureRunId();
 
             ProcessSensorHelper.EnrichParentProcess(message, pidHashGenerator);
 
             return message;
-        }
-
-        private static string ResolveExecutablePath(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return path;
-            }
-
-            try
-            {
-                if (path.StartsWith("/proc/", StringComparison.OrdinalIgnoreCase))
-                {
-                    var fileInfo = new FileInfo(path);
-                    var linkTarget = fileInfo.ResolveLinkTarget(returnFinalTarget: true);
-                    if (linkTarget != null)
-                    {
-                        return linkTarget.FullName;
-                    }
-                }
-            }
-            catch
-            {
-                // Process may have exited or access can be denied.
-            }
-
-            return path;
         }
 
         private static string BuildArguments(ProcReader.ProcessInfo processInfo)

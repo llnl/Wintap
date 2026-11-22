@@ -94,6 +94,10 @@ internal class ProcessStartData : SensorData
     // Producer lifecycle/image provenance, not a unique birth or success claim.
     // Missing/unsupported source remains null; do not decorate CommandLine.
     public string ProcessStartSource { get; internal set; }
+    public long? ObservationTimeFileTimeUtc { get; internal set; }
+    public long? ObservationTimeMonotonicNanoseconds { get; internal set; }
+    public string ObservationClockDomain { get; internal set; }
+    public string ObservationRunId { get; internal set; }
     public string Hostname { get; set; }
 
     public string UniqueProcessKey

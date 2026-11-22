@@ -129,6 +129,7 @@ namespace gov.llnl.wintap.platform.windows.infrastructure
                     () => pc.LastRefreshRebuiltFromSnapshot,
                     pc.GetQaCounterSnapshot,
                     (message, level) => WintapLogger.Log.Append(message, level));
+                pc.StartPeriodicRefresh();
                 baseSensors.Add(pc);
 
                 foreach (CollectorStartupEntry entry in startupPlan.SharedKernelSensors)

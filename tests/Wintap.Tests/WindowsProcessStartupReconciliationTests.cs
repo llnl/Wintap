@@ -580,6 +580,51 @@ namespace Wintap.Tests
             finally { if (File.Exists(path)) File.Delete(path); }
         }
 
+        [Fact]
+        public void PeriodicRefreshPreservesBirthIdentityUsesScanObservationTimeAndNeverReconciles()
+        {
+            var fixture = new Fixture();
+            DateTime parentBirth = Boot.AddMinutes(10);
+            DateTime childBirth = parentBirth.AddSeconds(1);
+            fixture.Snapshot.Add(Snapshot(700, 0, parentBirth, "periodic-parent.exe"));
+            fixture.Snapshot.Add(Snapshot(701, 700, childBirth, "periodic-child.exe"));
+
+            DateTime firstScan = Restart.AddMinutes(5);
+            fixture.CurrentUtc = firstScan;
+            Assert.True(fixture.Sensor.RunPeriodicRefreshSnapshot());
+            DateTime secondScan = firstScan.AddHours(1);
+            fixture.CurrentUtc = secondScan;
+            Assert.True(fixture.Sensor.RunPeriodicRefreshSnapshot());
+
+            Assert.Equal(4, fixture.Emitted.Count);
+            foreach (int pid in new[] { 700, 701 })
+            {
+                WintapMessage[] messages = fixture.Emitted.Where(message => message.PID == pid).ToArray();
+                Assert.Equal(2, messages.Length);
+                Assert.Equal(messages[0].PidHash, messages[1].PidHash);
+                Assert.Equal(pid == 700 ? parentBirth.ToFileTimeUtc() : childBirth.ToFileTimeUtc(), messages[0].EventTime);
+                Assert.Equal(messages[0].EventTime, messages[1].EventTime);
+                Assert.Equal(firstScan.ToFileTimeUtc(), messages[0].Process.ObservationTimeFileTimeUtc);
+                Assert.Equal(secondScan.ToFileTimeUtc(), messages[1].Process.ObservationTimeFileTimeUtc);
+                Assert.All(messages, message =>
+                {
+                    Assert.Equal(WintapMessage.ActivityTypeEnum.Refresh, message.ActivityType);
+                    Assert.Equal("userspace-utc", message.Process.ObservationClockDomain);
+                    Assert.Null(message.Process.ObservationTimeMonotonicNanoseconds);
+                    Assert.False(string.IsNullOrWhiteSpace(message.Process.ObservationRunId));
+                    Assert.True(message.ReceiveTime > 0);
+                });
+            }
+
+            Assert.Equal(Hash(700, parentBirth), fixture.Emitted.Single(message =>
+                message.PID == 701 && message.Process.ObservationTimeFileTimeUtc == firstScan.ToFileTimeUtc()).Process.ParentPidHash);
+            Assert.Equal(2, fixture.EnumerationCalls);
+            Assert.Equal(2, fixture.HistoryCalls);
+            Assert.Equal(0, fixture.ClearCalls);
+            Assert.Equal(0, fixture.ReconcileCalls);
+            Assert.Empty(fixture.Gaps);
+        }
+
         private static void SetField(Type type, object target, string name, object value)
         {
             var field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -618,6 +663,7 @@ namespace Wintap.Tests
             internal IReadOnlyCollection<string> ReconciledHashes = Array.Empty<string>();
             internal int ClearCalls, EnumerationCalls, HistoryCalls, ReconcileCalls, CurrentPidEnrichmentCalls;
             internal bool FailClear, FailHistory, FailEnumeration, FailBootAnchor;
+            internal DateTime CurrentUtc = Restart;
             internal Func<WintapMessage, bool> FailEmit;
             internal Func<int, DateTime, ProcessRecord> ResolveOverride;
 
@@ -626,7 +672,7 @@ namespace Wintap.Tests
                 Sensor = new WindowsProcessSensor(
                     resolveProcessAtTime: Resolve,
                     emit: Register,
-                    utcNow: () => Restart,
+                    utcNow: () => CurrentUtc,
                     enumerateSnapshot: () =>
                     {
                         EnumerationCalls++;

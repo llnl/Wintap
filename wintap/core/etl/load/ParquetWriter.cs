@@ -325,7 +325,16 @@ namespace gov.llnl.wintap.core.etl.load
                 try
                 {
                     DataField field = null;
-                    if ((kvp.Key == "ParentPidHash" || kvp.Key == "FileSha2" || kvp.Key == "FileMd5") && kvp.Value == null)
+                    if (kvp.Key == "ObservationTimeFileTimeUtc" ||
+                        kvp.Key == "ObservationTimeMonotonicNanoseconds" ||
+                        kvp.Key == "Process_ObservationTimeFileTimeUtc" ||
+                        kvp.Key == "Process_ObservationTimeMonotonicNanoseconds")
+                    {
+                        // Optional process timing must retain one nullable numeric
+                        // schema regardless of first-row population or row order.
+                        field = new DataField(kvp.Key, typeof(long?));
+                    }
+                    else if ((kvp.Key == "ParentPidHash" || kvp.Key == "FileSha2" || kvp.Key == "FileMd5") && kvp.Value == null)
                     {
                         // HACK: Just set type to "string". Not sure how to get the base type correctly, but Key is the type we want.
                         // Next HACK, set a default on the ProcessRecord

@@ -2,6 +2,7 @@ using gov.llnl.wintap.collect.models;
 using gov.llnl.wintap.core.shared.helpers;
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace gov.llnl.wintap.platform.linux.collect
 {
@@ -11,45 +12,56 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal static class ProcessSensorHelper
     {
         /// <summary>
-        /// Extract just the process name from a full path
-        /// Examples:
-        ///   "/usr/bin/bash" → "bash"
-        ///   "/bin/sshd" → "sshd"
-        ///   "bash" → "bash"
-        ///   "bash -c ls" → "bash" (extracts first word if looks like cmdline)
-        /// 
-        /// Handles empty strings, command lines, and malformed paths
+        /// Select a basename from executable-path evidence, otherwise observed comm.
+        /// A procfs executable alias is not an executable name. Command lines must
+        /// use the separate command-line helper, not this path-only method.
         /// </summary>
-        public static string ExtractProcessName(string path, string fallback = "unknown-4")
+        public static string ExtractProcessName(string path, string fallback = "unknown")
         {
-            // Handle null or empty (whitespace counts as empty too)
-            if (string.IsNullOrWhiteSpace(path))
-                return NormalizeFallback(fallback);
+            string nameFallback = string.IsNullOrWhiteSpace(fallback) ? "unknown" : fallback.Trim();
+            if (string.IsNullOrWhiteSpace(path) || IsProcExecutableAlias(path) || IsUnknownPath(path))
+                return nameFallback;
 
             try
             {
                 path = path.Trim();
-                
-                // If path contains spaces, it might be a command line - extract first word
-                if (path.Contains(" "))
-                {
-                    string firstArg = path.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)[0];
-                    path = firstArg;
-                }
-                
-                // Get the filename from the path (handles both /usr/bin/bash and bash)
+                if (path.EndsWith(" (deleted)", StringComparison.Ordinal))
+                    path = path.Substring(0, path.Length - " (deleted)".Length);
+
                 string fileName = Path.GetFileName(path);
-                
-                // If GetFileName returned empty
-                if (string.IsNullOrWhiteSpace(fileName))
-                    return NormalizeFallback(fallback);
-                
-                // Final check - return fileName if valid, otherwise fallback
-                return string.IsNullOrWhiteSpace(fileName) ? NormalizeFallback(fallback) : fileName;
+                return string.IsNullOrWhiteSpace(fileName) ? nameFallback : fileName;
             }
             catch
             {
-                return NormalizeFallback(fallback);
+                return nameFallback;
+            }
+        }
+
+        private static bool IsProcExecutableAlias(string path) =>
+            Regex.IsMatch(path.Trim(), @"^/proc/(?:[0-9]+|self|thread-self)/(?:task/[0-9]+/)?exe$");
+
+        private static bool IsUnknownPath(string path) =>
+            Regex.IsMatch(path.Trim(), @"^unknown(?:-[0-9]+)?$");
+
+        internal static string ResolveExecutablePath(string path, Func<string, string> readLinkTarget = null)
+        {
+            if (string.IsNullOrWhiteSpace(path) || IsUnknownPath(path)) return null;
+            return IsProcExecutableAlias(path) ? ReadExecutableLink(path, readLinkTarget) : path;
+        }
+
+        internal static string ReadExecutableLink(string path, Func<string, string> readLinkTarget = null)
+        {
+            try
+            {
+                // Readlink does not require the target to still exist (deleted images).
+                string target = readLinkTarget != null ? readLinkTarget(path) : new FileInfo(path).LinkTarget;
+                return !string.IsNullOrWhiteSpace(target) && Path.IsPathRooted(target) &&
+                    !IsProcExecutableAlias(target) ? target : null;
+            }
+            catch
+            {
+                // Missing process, exit race, permission denial, or non-link.
+                return null;
             }
         }
 
@@ -181,20 +193,7 @@ namespace gov.llnl.wintap.platform.linux.collect
         /// </summary>
         public static string GetExecutablePath(int pid, string fallback = null)
         {
-            try
-            {
-                string exePath = $"/proc/{pid}/exe";
-                if (File.Exists(exePath))
-                {
-                    var fileInfo = new FileInfo(exePath);
-                    return fileInfo.LinkTarget ?? fileInfo.FullName;
-                }
-            }
-            catch
-            {
-                // Process already gone or permission denied
-            }
-            return fallback;
+            return ReadExecutableLink($"/proc/{pid}/exe") ?? ResolveExecutablePath(fallback);
         }
     }
 }
