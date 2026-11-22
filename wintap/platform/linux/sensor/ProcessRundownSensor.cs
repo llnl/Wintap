@@ -148,7 +148,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                 path: executablePath,
                 commandLine: commandLine,
                 user: processInfo.Username ?? processInfo.Uid.ToString(),
-                arguments: BuildArguments(processInfo)
+                arguments: BuildArguments(processInfo),
+                commandLineSource: processInfo.CommandLineSource,
+                commandLineCaptureStatus: processInfo.CommandLineCaptureStatus
             );
             message.Process.ObservationTimeFileTimeUtc = observationUtc.ToUniversalTime().ToFileTimeUtc();
             message.Process.ObservationClockDomain = "userspace-utc";

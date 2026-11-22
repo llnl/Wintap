@@ -85,7 +85,9 @@ namespace gov.llnl.wintap.platform.linux.collect
             string commandLine,
             string user,
             int? exitCode = null,
-            string arguments = null)
+            string arguments = null,
+            string commandLineSource = null,
+            string commandLineCaptureStatus = null)
         {
             var processObj = new WintapMessage.ProcessObject
             {
@@ -94,6 +96,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 Name = NormalizeFallback(name),
                 Path = string.IsNullOrWhiteSpace(path) ? "unknown-5" : path,
                 CommandLine = commandLine ?? "",
+                CommandLineSource = commandLineSource,
+                CommandLineCaptureStatus = commandLineCaptureStatus,
                 User = NormalizeFallback(user),
                 UniqueProcessKey = "unknown-key"
             };

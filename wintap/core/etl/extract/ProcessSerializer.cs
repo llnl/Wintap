@@ -65,6 +65,8 @@ namespace gov.llnl.wintap.core.etl.extract
             procWD.ObservationTimeMonotonicNanoseconds = wintapMessage.Process.ObservationTimeMonotonicNanoseconds;
             procWD.ObservationClockDomain = wintapMessage.Process.ObservationClockDomain;
             procWD.ObservationRunId = wintapMessage.Process.ObservationRunId;
+            procWD.CommandLineSource = wintapMessage.Process.CommandLineSource;
+            procWD.CommandLineCaptureStatus = wintapMessage.Process.CommandLineCaptureStatus;
             ApplyStartProvenance(procWD, wintapMessage.Process.Arguments);
 
             try

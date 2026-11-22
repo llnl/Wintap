@@ -218,6 +218,10 @@ namespace gov.llnl.wintap.collect.models
             public string Name { get; set; }
             public string Path { get; set; }
             public string CommandLine { get; set; }
+            /// <summary>Producer boundary used to observe CommandLine.</summary>
+            public string CommandLineSource { get; set; }
+            /// <summary>Producer-reported capture outcome for CommandLine.</summary>
+            public string CommandLineCaptureStatus { get; set; }
             public string Arguments { get; set; }
             public string User { get; set; }
             public long ExitCode { get; set; }

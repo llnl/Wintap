@@ -50,3 +50,14 @@ a native Windows runner for platform acceptance.
 
 Run the focused continuation with the same SDK and isolated roots above, changing
 the filter to `Category=sfx-02`. No test starts a collector or attaches BPF.
+
+## sfx-03 — Linux command-line provenance
+
+Synthetic tests distinguish captured, empty, unavailable, read-error and bounded
+truncated procfs command lines; ensure truncation emits only complete arguments;
+prove clone observations never copy a parent's command line; and preserve additive
+source/status fields through normal and direct Parquet projections. Structured
+argv, eBPF argv capture, exec-result correlation and DBT selection remain deferred.
+
+Run with the same isolated SDK/root pattern above and filter `Category=sfx-03`.
+No focused test starts a collector, attaches BPF, or reads live process metadata.

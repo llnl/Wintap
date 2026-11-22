@@ -201,7 +201,9 @@ namespace gov.llnl.wintap.platform.linux.collect
                     user: userName,
                     arguments: !string.IsNullOrEmpty(procData.Home) 
                         ? $"HOME={procData.Home} SHELL={procData.Shell}" 
-                        : null
+                        : null,
+                    commandLineSource: procData.CommandLineSource,
+                    commandLineCaptureStatus: procData.CommandLineCaptureStatus
                 );
                 KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 

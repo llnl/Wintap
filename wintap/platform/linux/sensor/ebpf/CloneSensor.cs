@@ -94,6 +94,15 @@ namespace gov.llnl.wintap.platform.linux.collect
             return (path ?? "unknown", ProcessSensorHelper.ExtractProcessName(path, comm));
         }
 
+        internal static (string CommandLine, string Source, string Status) SelectCommandLineMetadata(
+            ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent)
+        {
+            return (
+                child.CommandLine ?? string.Empty,
+                child.CommandLineSource ?? ProcReader.ProcfsCommandLineSource,
+                child.CommandLineCaptureStatus ?? ProcReader.CommandLineUnavailable);
+        }
+
         private int HandleEvent(IntPtr ctx, IntPtr data, UIntPtr size)
         {
             try
@@ -117,6 +126,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 var metadata = SelectExecutableMetadata(childProcData, parentProcData, evt.GetParentComm());
                 string executablePath = metadata.Path;
                 string processName = metadata.Name;
+                var commandLine = SelectCommandLineMetadata(childProcData, parentProcData);
 
                 DateTime? startUtc = LinuxLifecycleEvidence.SelectBirthStart(
                     ProcReader.TryConvertBootNsToUtc(kernelStartNs), childProcData.StartTimeUtc);
@@ -144,10 +154,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                     ppid: (int)evt.ParentPid,
                     name: processName,
                     path: executablePath,
-                    commandLine: childProcData.CommandLine != "" 
-                                 ? childProcData.CommandLine 
-                                 : (parentProcData.CommandLine ?? ""),
-                    user: userName
+                    commandLine: commandLine.CommandLine,
+                    user: userName,
+                    commandLineSource: commandLine.Source,
+                    commandLineCaptureStatus: commandLine.Status
                 );
                 KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
