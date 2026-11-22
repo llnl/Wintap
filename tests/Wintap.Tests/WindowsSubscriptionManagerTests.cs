@@ -1,6 +1,9 @@
 using gov.llnl.wintap.platform.windows.infrastructure;
 using gov.llnl.wintap.platform.windows.collect.etw;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using gov.llnl.wintap;
+using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Xunit;
 
@@ -161,6 +164,12 @@ namespace Wintap.Tests
             });
 
             AssertOrder(plan, "EnableKernelProvider", "StartSharedKernelSensors");
+            AssertOrder(plan, "EnableKernelProvider", "InitializeProcessBootstrap");
+            AssertOrder(plan, "InitializeProcessBootstrap", "StartProcessSensor");
+            AssertOrder(plan, "StartProcessSensor", "ReplayBootProcessTrace");
+            AssertOrder(plan, "ReplayBootProcessTrace", "InitializeProcessSnapshotDelta");
+            AssertOrder(plan, "InitializeProcessSnapshotDelta", "ValidateExplorerProcessLineage");
+            AssertOrder(plan, "ValidateExplorerProcessLineage", "StartSharedKernelSensors");
             AssertOrder(plan, "StartSharedKernelSensors", "StartKernelConsumer");
             AssertOrder(plan, "StartKernelConsumer", "StartIndependentSensors");
         }
@@ -174,6 +183,142 @@ namespace Wintap.Tests
             Assert.NotNull(start);
             Assert.Equal(typeof(FileSensor), start.DeclaringType);
             Assert.True(WindowsSubscriptionManager.IsSharedKernelSensor(new FileSensor()));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        [Trait("Category", "wpc-10")]
+        public void ExecuteProcessStartup_BootstrapThenReplayThenDeltaBeforeConsumer(bool reset)
+        {
+            var executed = new List<string>();
+            var logs = new List<(string Message, LogLevel Level)>();
+            bool seedsReady = false;
+            bool replayHistoryReady = false;
+            WindowsSubscriptionManager.ExecuteProcessStartup(
+                true, "fixture.etl",
+                () =>
+                {
+                    executed.Add(reset ? "clear" : "retain");
+                    executed.Add("seeds");
+                    seedsReady = true;
+                    return true;
+                },
+                () => executed.Add("start"),
+                path =>
+                {
+                    Assert.Equal("fixture.etl", path);
+                    Assert.True(seedsReady);
+                    executed.Add("replay");
+                    replayHistoryReady = true;
+                    return true;
+                },
+                () =>
+                {
+                    Assert.True(replayHistoryReady);
+                    executed.Add("enumerate/delta");
+                    return true;
+                },
+                () => executed.Add("validation"),
+                () => reset,
+                () => new WindowsProcessQaCounters { SnapshotCount = 5, BootReplayCount = 7, DedupSuppressed = 3 },
+                (message, level) => logs.Add((message, level)));
+            executed.Add("shared/consumer");
+
+            Assert.Equal(new[] { reset ? "clear" : "retain", "seeds", "start", "replay", "enumerate/delta", "validation", "shared/consumer" }, executed);
+            var summary = Assert.Single(logs);
+            Assert.Equal(LogLevel.Info, summary.Level);
+            Assert.Contains("store=" + (reset ? "reset" : "retained"), summary.Message);
+            Assert.Contains("replay=succeeded delta=succeeded", summary.Message);
+            Assert.Contains("snapshot_count=5", summary.Message);
+            Assert.Contains("boot_replay_count=7", summary.Message);
+            Assert.Contains("dedup_suppressed=3", summary.Message);
+        }
+
+        [Theory]
+        [InlineData(false, true, true, true, "fixture.etl", "skipped-bootstrap-failed", "skipped-bootstrap-failed")]
+        [InlineData(true, false, true, true, "fixture.etl", "failed-or-partial", "succeeded")]
+        [InlineData(true, true, false, true, "fixture.etl", "succeeded", "failed")]
+        [InlineData(true, false, false, true, "fixture.etl", "failed-or-partial", "failed")]
+        [InlineData(true, true, true, true, null, "unavailable", "succeeded")]
+        [InlineData(true, true, true, false, null, "disabled", "succeeded")]
+        [InlineData(true, true, true, false, "fixture.etl", "disabled", "succeeded")]
+        [Trait("Category", "wpc-10")]
+        public void ExecuteProcessStartup_FailuresAndAbsentReplayPreserveLiveContinuation(
+            bool bootstrapResult, bool replayResult, bool deltaResult, bool enabled, string path,
+            string replayOutcome, string deltaOutcome)
+        {
+            var executed = new List<string>();
+            var logs = new List<(string Message, LogLevel Level)>();
+            WindowsSubscriptionManager.ExecuteProcessStartup(
+                enabled, path,
+                () => { executed.Add("bootstrap"); return bootstrapResult; },
+                () => executed.Add("start"),
+                _ => { executed.Add("replay"); return replayResult; },
+                () => { executed.Add("delta"); return deltaResult; },
+                () => executed.Add("validation"),
+                () => true,
+                () => new WindowsProcessQaCounters(),
+                (message, level) => logs.Add((message, level)));
+
+            var expected = new List<string> { "bootstrap", "start" };
+            if (bootstrapResult && enabled && path != null) expected.Add("replay");
+            if (bootstrapResult) expected.Add("delta");
+            expected.Add("validation");
+            Assert.Equal(expected, executed);
+            var summary = Assert.Single(logs.FindAll(entry => entry.Message.StartsWith("Windows process startup summary:")));
+            Assert.Contains("bootstrap=" + (bootstrapResult ? "succeeded" : "failed"), summary.Message);
+            Assert.Contains("replay=" + replayOutcome + " delta=" + deltaOutcome, summary.Message);
+            if (!bootstrapResult) Assert.Contains("store=uncertain", summary.Message);
+            if (!bootstrapResult || (enabled && path != null && !replayResult) || !deltaResult)
+                Assert.Equal(LogLevel.Warn, summary.Level);
+            Assert.Equal(enabled && path == null,
+                logs.Exists(entry => entry.Level == LogLevel.Warn && entry.Message.Contains("boot process trace was expected but absent")));
+        }
+
+        [Theory]
+        [InlineData("bootstrap")]
+        [InlineData("replay")]
+        [InlineData("delta")]
+        [Trait("Category", "wpc-10")]
+        public void ExecuteProcessStartup_ThrownInitializationPhaseIsDegradedWithoutRetry(string failingPhase)
+        {
+            var executed = new List<string>();
+            var logs = new List<string>();
+            bool Run(string phase)
+            {
+                executed.Add(phase);
+                if (phase == failingPhase) throw new InvalidOperationException("fixture failure");
+                return true;
+            }
+
+            WindowsSubscriptionManager.ExecuteProcessStartup(
+                true, "fixture.etl", () => Run("bootstrap"),
+                () => executed.Add("start"), _ => Run("replay"), () => Run("delta"),
+                () => executed.Add("validation"), () => false,
+                () => new WindowsProcessQaCounters(), (message, _) => logs.Add(message));
+
+            Assert.Equal(failingPhase == "bootstrap"
+                ? new[] { "bootstrap", "start", "validation" }
+                : new[] { "bootstrap", "start", "replay", "delta", "validation" }, executed);
+            Assert.Contains(logs, message => message.Contains("threw: fixture failure"));
+            Assert.Single(logs.FindAll(message => message.StartsWith("Windows process startup summary:")));
+        }
+
+        [Theory]
+        [InlineData(true, true, true)]
+        [InlineData(true, false, false)]
+        [InlineData(false, true, false)]
+        [Trait("Category", "wpc-10")]
+        public void ExecuteProcessStartup_MissingExpectedWarningKeepsRebuiltGate(bool enabled, bool reset, bool expectedWarning)
+        {
+            var logs = new List<string>();
+            WindowsSubscriptionManager.ExecuteProcessStartup(
+                enabled, null, () => true, () => { }, _ => throw new InvalidOperationException("replay must not run"),
+                () => true, () => { }, () => reset, () => new WindowsProcessQaCounters(),
+                (message, _) => logs.Add(message));
+
+            Assert.Equal(expectedWarning, logs.Exists(message => message.Contains("boot process trace was expected but absent")));
         }
 
         private static void AssertOrder(CollectorStartupPlan plan, string earlier, string later)
