@@ -61,3 +61,11 @@ argv, eBPF argv capture, exec-result correlation and DBT selection remain deferr
 
 Run with the same isolated SDK/root pattern above and filter `Category=sfx-03`.
 No focused test starts a collector, attaches BPF, or reads live process metadata.
+
+## sfx-04 — Linux exec observation semantics
+
+`ProcessExecutionObservationTests` distinguishes syscall-entry `exec_attempt`
+from scheduler-confirmed `exec_success`, verifies unsupported/non-exec producers
+remain nullable, and round-trips the additive field through normal and direct
+Parquet projection. Run with `Category=sfx-04`; the tests are synthetic and do
+not start a collector or attach BPF.

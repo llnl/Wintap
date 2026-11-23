@@ -215,13 +215,14 @@ namespace gov.llnl.wintap.core.etl.load
                 string fieldName = prefix + "_" + property.Name;
                 if (value == null)
                 {
-                    // These nullable numeric fields must be present even when a
+                    // These nullable process fields must be present even when a
                     // direct-process row has no value. Otherwise the first row
-                    // can omit the column entirely, or a kernel-led batch can
-                    // serialize a later Refresh omission as numeric zero.
+                    // can omit the column entirely and erase later populated
+                    // values from the batch schema.
                     if (prefix == "Process" &&
                         (property.Name == "ObservationTimeFileTimeUtc" ||
-                         property.Name == "ObservationTimeMonotonicNanoseconds"))
+                         property.Name == "ObservationTimeMonotonicNanoseconds" ||
+                         property.Name == "ExecutionObservationKind"))
                     {
                         values[fieldName] = null;
                     }

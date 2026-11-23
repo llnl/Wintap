@@ -14,6 +14,7 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal class ExecveSensor : BaseEbpfSensor
     {
         private const int _SC_CLK_TCK = 2;
+        private const uint SchedExecEventFlag = 0x80000000u;
         private ProcessHash _pidHashGenerator;
         private readonly System.Collections.Generic.List<IntPtr> _additionalLinks = new System.Collections.Generic.List<IntPtr>();
         private static DateTimeOffset? _cachedBootUtc;
@@ -89,6 +90,9 @@ namespace gov.llnl.wintap.platform.linux.collect
             string observedComm = !string.IsNullOrWhiteSpace(comm) ? comm : processInfo.Name;
             return (path ?? "unknown-1", ProcessSensorHelper.ExtractProcessName(path, observedComm));
         }
+
+        internal static string GetExecutionObservationKind(uint flags) =>
+            (flags & SchedExecEventFlag) != 0 ? "exec_success" : "exec_attempt";
 
         private static DateTimeOffset? TryGetBootUtc()
         {
@@ -205,10 +209,11 @@ namespace gov.llnl.wintap.platform.linux.collect
                     commandLineSource: procData.CommandLineSource,
                     commandLineCaptureStatus: procData.CommandLineCaptureStatus
                 );
+                message.Process.ExecutionObservationKind = GetExecutionObservationKind(evt.Flags);
                 KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
                 // Breadcrumb for start-event source.
-                if ((evt.Flags & 0x80000000u) != 0)
+                if ((evt.Flags & SchedExecEventFlag) != 0)
                 {
                     message.Process.Arguments = string.IsNullOrWhiteSpace(message.Process.Arguments)
                         ? "PROC_START_SRC=sched_exec"

@@ -93,6 +93,7 @@ internal class ProcessStartData : SensorData
     public string CommandLine { get { return _commandLine; } }
     public string CommandLineSource { get; internal set; }
     public string CommandLineCaptureStatus { get; internal set; }
+    public string ExecutionObservationKind { get; internal set; }
     // Producer lifecycle/image provenance, not a unique birth or success claim.
     // Missing/unsupported source remains null; do not decorate CommandLine.
     public string ProcessStartSource { get; internal set; }

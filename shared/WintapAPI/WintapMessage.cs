@@ -222,6 +222,12 @@ namespace gov.llnl.wintap.collect.models
             public string CommandLineSource { get; set; }
             /// <summary>Producer-reported capture outcome for CommandLine.</summary>
             public string CommandLineCaptureStatus { get; set; }
+            /// <summary>
+            /// Producer classification of an exec observation. Linux exec
+            /// producers use exec_attempt or exec_success; unsupported producers
+            /// leave this null.
+            /// </summary>
+            public string ExecutionObservationKind { get; set; }
             public string Arguments { get; set; }
             public string User { get; set; }
             public long ExitCode { get; set; }
