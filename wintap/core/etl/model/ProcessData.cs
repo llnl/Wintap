@@ -39,6 +39,10 @@ namespace gov.llnl.wintap.core.etl.models
         public int TokenElevationType { get; set; }
         public long ExitCode { get; set; }
         public string ExitCodeCaptureStatus { get; set; }
+        public long? ObservationTimeFileTimeUtc { get; set; }
+        public long? ObservationTimeMonotonicNanoseconds { get; set; }
+        public string ObservationClockDomain { get; set; }
+        public string ObservationRunId { get; set; }
         public string AgentId { get; internal set; }
     }
 }

@@ -83,3 +83,10 @@ Run with `Category=sfx-05`; no focused test starts a collector or attaches BPF.
 fallback placeholder zero without changing the numeric exit code. It verifies
 normal Stop and null-first direct projection. Run with `Category=sfx-06`; the
 focused tests are synthetic and do not start a collector or attach BPF.
+
+## sfx-07 — Linux Stop observation timing
+
+`ProcessExitObservationTimingTests` preserves Exit's existing kernel occurrence
+timestamp in additive observation metadata without changing Stop `EventTime` or
+identity. It verifies normal null-first and direct Stop projection. Run with
+`Category=sfx-07`; the focused tests are synthetic and do not attach BPF.

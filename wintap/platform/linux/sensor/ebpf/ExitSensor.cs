@@ -34,6 +34,11 @@ namespace gov.llnl.wintap.platform.linux.collect
             string.Equals(loadedTier, "core", StringComparison.Ordinal)
                 ? "kernel-wait-status" : "unavailable";
 
+        internal static void ApplyObservationTiming(
+            WintapMessage message, ulong timestampNs, long monotonicToRealtimeOffsetNs) =>
+            KernelTimestampConverter.ApplyKernelProcessObservation(
+                message, timestampNs, monotonicToRealtimeOffsetNs);
+
         protected override bool OnStarting()
         {
             monotonicOffset = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
@@ -124,6 +129,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     exitCode: evt.ExitCode
                 );
                 message.Process.ExitCodeCaptureStatus = GetExitCodeCaptureStatus(LoadedTier);
+                ApplyObservationTiming(message, evt.TimestampNs, monotonicOffset);
 
                 DateTime? kernelStart = ProcReader.TryConvertBootNsToUtc(starts.BootNs);
                 DateTime? canonicalStart = LinuxLifecycleEvidence.SelectBirthStart(kernelStart, procData.StartTimeUtc);
