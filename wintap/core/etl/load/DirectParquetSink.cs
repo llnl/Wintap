@@ -222,7 +222,8 @@ namespace gov.llnl.wintap.core.etl.load
                     if (prefix == "Process" &&
                         (property.Name == "ObservationTimeFileTimeUtc" ||
                          property.Name == "ObservationTimeMonotonicNanoseconds" ||
-                         property.Name == "ExecutionObservationKind"))
+                         property.Name == "ExecutionObservationKind" ||
+                         property.Name == "ExecutablePathSource"))
                     {
                         values[fieldName] = null;
                     }

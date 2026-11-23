@@ -68,6 +68,7 @@ namespace gov.llnl.wintap.core.etl.extract
             procWD.CommandLineSource = wintapMessage.Process.CommandLineSource;
             procWD.CommandLineCaptureStatus = wintapMessage.Process.CommandLineCaptureStatus;
             procWD.ExecutionObservationKind = wintapMessage.Process.ExecutionObservationKind;
+            procWD.ExecutablePathSource = wintapMessage.Process.ExecutablePathSource;
             ApplyStartProvenance(procWD, wintapMessage.Process.Arguments);
 
             try

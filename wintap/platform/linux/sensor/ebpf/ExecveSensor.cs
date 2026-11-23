@@ -85,10 +85,24 @@ namespace gov.llnl.wintap.platform.linux.collect
             string filename, string comm, ProcReader.ProcessInfo processInfo,
             Func<string, string> readLinkTarget = null)
         {
-            string path = ProcessSensorHelper.ResolveExecutablePath(filename, readLinkTarget)
-                ?? ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath, readLinkTarget);
+            var metadata = SelectExecutableMetadataAndSource(
+                filename, comm, processInfo, readLinkTarget);
+            return (metadata.Path, metadata.Name);
+        }
+
+        internal static (string Path, string Name, string Source) SelectExecutableMetadataAndSource(
+            string filename, string comm, ProcReader.ProcessInfo processInfo,
+            Func<string, string> readLinkTarget = null)
+        {
+            string eventPath = ProcessSensorHelper.ResolveExecutablePath(filename, readLinkTarget);
+            string procfsPath = eventPath == null
+                ? ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath, readLinkTarget)
+                : null;
+            string path = eventPath ?? procfsPath;
             string observedComm = !string.IsNullOrWhiteSpace(comm) ? comm : processInfo.Name;
-            return (path ?? "unknown-1", ProcessSensorHelper.ExtractProcessName(path, observedComm));
+            string source = eventPath != null ? "exec-event-filename"
+                : procfsPath != null ? "procfs-exe" : "unavailable";
+            return (path ?? "unknown-1", ProcessSensorHelper.ExtractProcessName(path, observedComm), source);
         }
 
         internal static string GetExecutionObservationKind(uint flags) =>
@@ -175,7 +189,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 string rawComm = evt.GetComm();
                 string rawCmdline = procData.CommandLine;
                 
-                var metadata = SelectExecutableMetadata(rawFilename, rawComm, procData);
+                var metadata = SelectExecutableMetadataAndSource(rawFilename, rawComm, procData);
                 string executablePath = metadata.Path;
                 string processName = metadata.Name;
                 int parentPid = procData.PPid > 0 ? procData.PPid : (int)evt.PPid;
@@ -210,6 +224,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     commandLineCaptureStatus: procData.CommandLineCaptureStatus
                 );
                 message.Process.ExecutionObservationKind = GetExecutionObservationKind(evt.Flags);
+                message.Process.ExecutablePathSource = metadata.Source;
                 KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
                 // Breadcrumb for start-event source.

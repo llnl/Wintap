@@ -130,7 +130,8 @@ namespace gov.llnl.wintap.platform.linux.collect
 
             int pid = (int)processInfo.Pid;
             string commandLine = processInfo.CommandLine ?? string.Empty;
-            string executablePath = ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath) ?? "unknown-5";
+            string resolvedExecutablePath = ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath);
+            string executablePath = resolvedExecutablePath ?? "unknown-5";
             string processName = ProcessSensorHelper.ExtractProcessName(executablePath, processInfo.Name);
 
             var message = new WintapMessage(startTimeUtc, pid, WintapMessage.MessageTypeEnum.Process)
@@ -152,6 +153,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                 commandLineSource: processInfo.CommandLineSource,
                 commandLineCaptureStatus: processInfo.CommandLineCaptureStatus
             );
+            message.Process.ExecutablePathSource = resolvedExecutablePath != null
+                ? "procfs-exe" : "unavailable";
             message.Process.ObservationTimeFileTimeUtc = observationUtc.ToUniversalTime().ToFileTimeUtc();
             message.Process.ObservationClockDomain = "userspace-utc";
             message.Process.ObservationRunId = RuntimeCapabilities.GetCaptureRunId();

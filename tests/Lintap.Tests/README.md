@@ -69,3 +69,10 @@ from scheduler-confirmed `exec_success`, verifies unsupported/non-exec producers
 remain nullable, and round-trips the additive field through normal and direct
 Parquet projection. Run with `Category=sfx-04`; the tests are synthetic and do
 not start a collector or attach BPF.
+
+## sfx-05 — Linux executable-path evidence source
+
+`ProcessExecutablePathSourceTests` preserves existing exec, clone, and rundown
+path precedence while labeling event-filename, own-procfs, inherited-parent, and
+unavailable evidence. It also verifies normal and null-first direct projection.
+Run with `Category=sfx-05`; no focused test starts a collector or attaches BPF.

@@ -87,11 +87,25 @@ namespace gov.llnl.wintap.platform.linux.collect
             ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent, string parentComm,
             Func<string, string> readLinkTarget = null)
         {
-            string path = ProcessSensorHelper.ResolveExecutablePath(child.ExecutablePath, readLinkTarget)
-                ?? ProcessSensorHelper.ResolveExecutablePath(parent.ExecutablePath, readLinkTarget);
+            var metadata = SelectExecutableMetadataAndSource(
+                child, parent, parentComm, readLinkTarget);
+            return (metadata.Path, metadata.Name);
+        }
+
+        internal static (string Path, string Name, string Source) SelectExecutableMetadataAndSource(
+            ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent, string parentComm,
+            Func<string, string> readLinkTarget = null)
+        {
+            string childPath = ProcessSensorHelper.ResolveExecutablePath(child.ExecutablePath, readLinkTarget);
+            string parentPath = childPath == null
+                ? ProcessSensorHelper.ResolveExecutablePath(parent.ExecutablePath, readLinkTarget)
+                : null;
+            string path = childPath ?? parentPath;
             string comm = !string.IsNullOrWhiteSpace(child.Name) ? child.Name
                 : !string.IsNullOrWhiteSpace(parentComm) ? parentComm : parent.Name;
-            return (path ?? "unknown", ProcessSensorHelper.ExtractProcessName(path, comm));
+            string source = childPath != null ? "procfs-exe"
+                : parentPath != null ? "parent-procfs-exe" : "unavailable";
+            return (path ?? "unknown", ProcessSensorHelper.ExtractProcessName(path, comm), source);
         }
 
         internal static (string CommandLine, string Source, string Status) SelectCommandLineMetadata(
@@ -123,7 +137,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // Read child process info (may not be available yet if process executes quickly)
                 var childProcData = ProcReader.ReadProcessInfo(evt.ChildPid);
 
-                var metadata = SelectExecutableMetadata(childProcData, parentProcData, evt.GetParentComm());
+                var metadata = SelectExecutableMetadataAndSource(childProcData, parentProcData, evt.GetParentComm());
                 string executablePath = metadata.Path;
                 string processName = metadata.Name;
                 var commandLine = SelectCommandLineMetadata(childProcData, parentProcData);
@@ -159,6 +173,7 @@ namespace gov.llnl.wintap.platform.linux.collect
                     commandLineSource: commandLine.Source,
                     commandLineCaptureStatus: commandLine.Status
                 );
+                message.Process.ExecutablePathSource = metadata.Source;
                 KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
                 // Distinguish inherited birth metadata from a later exec image.

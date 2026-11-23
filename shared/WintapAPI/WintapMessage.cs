@@ -228,6 +228,11 @@ namespace gov.llnl.wintap.collect.models
             /// leave this null.
             /// </summary>
             public string ExecutionObservationKind { get; set; }
+            /// <summary>
+            /// Producer evidence source for Path. Linux process producers use a
+            /// bounded vocabulary; unsupported producers leave this null.
+            /// </summary>
+            public string ExecutablePathSource { get; set; }
             public string Arguments { get; set; }
             public string User { get; set; }
             public long ExitCode { get; set; }
