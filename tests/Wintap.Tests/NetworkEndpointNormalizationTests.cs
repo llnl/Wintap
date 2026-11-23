@@ -111,17 +111,49 @@ namespace Wintap.Tests
         public void LoopbackConnectionId_RemainsScopedToHost()
         {
             ProcessConnIncrData firstHost = CreateConnection(
-                "TcpIpSend", "127.0.0.1", 51000, "127.0.0.1", 41000,
+                "TcpIpSend", "127.0.0.2", 51000, "127.0.0.3", 41000,
                 "first-host", new List<NIC>());
             ProcessConnIncrData secondHost = CreateConnection(
-                "TcpIpSend", "127.0.0.1", 51000, "127.0.0.1", 41000,
+                "TcpIpSend", "127.0.0.2", 51000, "127.0.0.3", 41000,
                 "second-host", new List<NIC>());
             ProcessConnIncrData reverseOnFirstHost = CreateConnection(
-                "TcpIpRecv", "127.0.0.1", 51000, "127.0.0.1", 41000,
+                "TcpIpRecv", "127.0.0.2", 51000, "127.0.0.3", 41000,
                 "first-host", new List<NIC>());
 
             Assert.NotEqual(firstHost.ConnId, secondHost.ConnId);
             Assert.Equal(firstHost.ConnId, reverseOnFirstHost.ConnId);
+            Assert.Equal(
+                ConnectionId(
+                    "first-host",
+                    Converters.ConvertIpToLong("127.0.0.2"),
+                    51000,
+                    Converters.ConvertIpToLong("127.0.0.3"),
+                    41000,
+                    "TCP"),
+                firstHost.ConnId);
+        }
+
+        [Fact]
+        public void NonLoopbackConnectionId_UsesPublicContext_NotHostnameOrLegacyContext()
+        {
+            const string firstIp = "192.168.252.40";
+            const string secondIp = "192.168.252.41";
+            ProcessConnIncrData firstHost = CreateConnection(
+                "TcpIpSend", firstIp, 58969, secondIp, 22,
+                "first-host", new List<NIC>());
+            ProcessConnIncrData secondHost = CreateConnection(
+                "TcpIpSend", firstIp, 58969, secondIp, 22,
+                "second-host", new List<NIC>());
+            long firstIpLong = Converters.ConvertIpToLong(firstIp);
+            long secondIpLong = Converters.ConvertIpToLong(secondIp);
+
+            Assert.Equal(firstHost.ConnId, secondHost.ConnId);
+            Assert.Equal(
+                ConnectionId("public", firstIpLong, 58969, secondIpLong, 22, "TCP"),
+                firstHost.ConnId);
+            Assert.NotEqual(
+                ConnectionId("llnl", firstIpLong, 58969, secondIpLong, 22, "TCP"),
+                firstHost.ConnId);
         }
 
         [Fact]
@@ -129,15 +161,15 @@ namespace Wintap.Tests
         {
             const long firstIp = 0x0a000001;
             const long secondIp = 0x0a000002;
-            string baseline = ConnectionId("llnl", firstIp, 49152, secondIp, 22, "TCP");
+            string baseline = ConnectionId("public", firstIp, 49152, secondIp, 22, "TCP");
 
             Assert.NotEqual(baseline, ConnectionId("other-context", firstIp, 49152, secondIp, 22, "TCP"));
-            Assert.NotEqual(baseline, ConnectionId("llnl", firstIp + 1, 49152, secondIp, 22, "TCP"));
-            Assert.NotEqual(baseline, ConnectionId("llnl", firstIp, 49153, secondIp, 22, "TCP"));
-            Assert.NotEqual(baseline, ConnectionId("llnl", firstIp, 49152, secondIp + 1, 22, "TCP"));
-            Assert.NotEqual(baseline, ConnectionId("llnl", firstIp, 49152, secondIp, 23, "TCP"));
-            Assert.NotEqual(baseline, ConnectionId("llnl", firstIp, 49152, secondIp, 22, "UDP"));
-            Assert.Equal(baseline, ConnectionId("llnl", secondIp, 22, firstIp, 49152, "tcp"));
+            Assert.NotEqual(baseline, ConnectionId("public", firstIp + 1, 49152, secondIp, 22, "TCP"));
+            Assert.NotEqual(baseline, ConnectionId("public", firstIp, 49153, secondIp, 22, "TCP"));
+            Assert.NotEqual(baseline, ConnectionId("public", firstIp, 49152, secondIp + 1, 22, "TCP"));
+            Assert.NotEqual(baseline, ConnectionId("public", firstIp, 49152, secondIp, 23, "TCP"));
+            Assert.NotEqual(baseline, ConnectionId("public", firstIp, 49152, secondIp, 22, "UDP"));
+            Assert.Equal(baseline, ConnectionId("public", secondIp, 22, firstIp, 49152, "tcp"));
         }
 
         private static ProcessConnIncrData AssertEndpoints(string activity, bool inbound, int localPort = 22, int remotePort = 58969, string peerIp = "192.168.252.1")
