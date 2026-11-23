@@ -38,6 +38,7 @@ namespace gov.llnl.wintap.core.etl.models
         public int HardFaultCount { get; set; }
         public int TokenElevationType { get; set; }
         public long ExitCode { get; set; }
+        public string ExitCodeCaptureStatus { get; set; }
         public string AgentId { get; internal set; }
     }
 }

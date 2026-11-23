@@ -73,6 +73,7 @@ namespace gov.llnl.wintap.core.etl.extract
             procWD.CommitPeak = endedProcess.Process.CommitPeak;
             procWD.CPUCycleCount = endedProcess.Process.CPUCycleCount;
             procWD.ExitCode = endedProcess.Process.ExitCode;
+            procWD.ExitCodeCaptureStatus = endedProcess.Process.ExitCodeCaptureStatus;
             procWD.CPUUtilization = endedProcess.Process.CPUUtilization;
             procWD.HardFaultCount = endedProcess.Process.HardFaultCount;
             procWD.ReadOperationCount = endedProcess.Process.ReadOperationCount;

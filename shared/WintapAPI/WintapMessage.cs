@@ -236,6 +236,11 @@ namespace gov.llnl.wintap.collect.models
             public string Arguments { get; set; }
             public string User { get; set; }
             public long ExitCode { get; set; }
+            /// <summary>
+            /// Producer-reported capture status for ExitCode. Unsupported
+            /// producers leave this null.
+            /// </summary>
+            public string ExitCodeCaptureStatus { get; set; }
             public long CPUCycleCount { get; set; }
             public int CPUUtilization { get; set; }
             public long CommitCharge { get; set; }

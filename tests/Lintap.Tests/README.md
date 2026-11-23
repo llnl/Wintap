@@ -76,3 +76,10 @@ not start a collector or attach BPF.
 path precedence while labeling event-filename, own-procfs, inherited-parent, and
 unavailable evidence. It also verifies normal and null-first direct projection.
 Run with `Category=sfx-05`; no focused test starts a collector or attaches BPF.
+
+## sfx-06 — Linux exit-code capture status
+
+`ProcessExitCodeCaptureStatusTests` distinguishes CO-RE kernel wait status from
+fallback placeholder zero without changing the numeric exit code. It verifies
+normal Stop and null-first direct projection. Run with `Category=sfx-06`; the
+focused tests are synthetic and do not start a collector or attach BPF.

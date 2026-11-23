@@ -223,7 +223,8 @@ namespace gov.llnl.wintap.core.etl.load
                         (property.Name == "ObservationTimeFileTimeUtc" ||
                          property.Name == "ObservationTimeMonotonicNanoseconds" ||
                          property.Name == "ExecutionObservationKind" ||
-                         property.Name == "ExecutablePathSource"))
+                         property.Name == "ExecutablePathSource" ||
+                         property.Name == "ExitCodeCaptureStatus"))
                     {
                         values[fieldName] = null;
                     }
