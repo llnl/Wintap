@@ -34,7 +34,17 @@ namespace gov.llnl.wintap.core.etl.transform
             IpV4Addr loIp = createIpAddr(loHi.LoAddrStr, (uint)loHi.LoIPV4LongVal, loGW);
             IpV4Addr hiIp = createIpAddr(loHi.HiAddrStr, (uint)loHi.HiIPV4LongVal, hiGW);
             IdGenerator idgen = new IdGenerator();
-            string connId = idgen.GenKeyForFive_Tuple_Conn(context, loHi.LoAddrStr, loHi.LoIPV4LongVal, loGW, loHi.LoIPPortInt, loHi.HiAddrStr, loHi.HiIPV4LongVal, hiGW, loHi.HiIPPortInt, loHi.Protocol.ToUpper());
+            string connId = idgen.GenKeyForFive_Tuple_Conn(
+                context,
+                loHi.LoAddrStr,
+                loHi.LoIPV4LongVal,
+                getConnectionIdentityNamespace(loHi.LoIPV4LongVal, loGW),
+                loHi.LoIPPortInt,
+                loHi.HiAddrStr,
+                loHi.HiIPV4LongVal,
+                getConnectionIdentityNamespace(loHi.HiIPV4LongVal, hiGW),
+                loHi.HiIPPortInt,
+                loHi.Protocol.ToUpper());
             ProcessConnIncrData pci = new ProcessConnIncrData();
             pci.ConnId = connId;
             pci.LocalIpPrivateGateway = loGW;
@@ -114,6 +124,15 @@ namespace gov.llnl.wintap.core.etl.transform
                 }
             }
             return pg;
+        }
+
+        private static string getConnectionIdentityNamespace(long ipAddr, string privateGateway)
+        {
+            // A default gateway is host-local metadata: opposite sensors can attach
+            // the same gateway to opposite endpoint slots and split one connection.
+            // Loopback tuples cannot cross hosts, so retain the existing host value
+            // to prevent unrelated hosts' identical loopback tuples from colliding.
+            return (ipAddr >> 24) == 127 ? privateGateway : "";
         }
     }
 }
