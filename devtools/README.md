@@ -145,8 +145,14 @@ fork birth inherits its parent's name and resolver may normalize Python aliases.
 Each invocation has a distinct run ID/output directory.
 
 - Process: fork-only, fork+exec/image replacement, posix_spawn/exec, thread creation
-  (negative process-Start case), and normal exits. `posix_spawn` does not guarantee
-  a particular libc syscall implementation.
+  (negative process-Start case), normal exits, repeated successful exec in one PID
+  with changing argument tokens, a failed exec attempt followed by a successful exec,
+  and an optional long-lived Refresh candidate. `posix_spawn` does not guarantee
+  a particular libc syscall implementation. Use `--rounds N --interval SECONDS` for
+  repeated stimulus and `--refresh-hold SECONDS` to keep a named process alive across
+  collector rundown ticks. The manifest records expected `exec_attempt` versus
+  `exec_success` stages, same-PID grouping, argument tokens, and Refresh candidates;
+  it does not assert one telemetry row per syscall.
 - File: create/open, write/read, file-backed mmap, close, delete, relative
   dirfd openat/unlinkat; extra rename/truncate probes. Current Linux normalized
   activities are Open/Read/Write/Close/Delete; mmap folds into Read.
@@ -168,6 +174,72 @@ inside this invocation, leaving existing default validation manifests unchanged.
 Absent helper is an explicit skip; unsupported clone3 includes errno in the native
 manifest. Supplied-but-broken helpers or failed operations return exit 1, with
 results retained. `--hold` adjusts Python worker dwell (default 0.2 seconds).
+
+### Bounded Linux executable-attribution capture
+
+For the Linux same-`PidHash` investigation, use a fresh output directory and a
+collector configured with a one-minute process Refresh interval. The following
+workload is intentionally about ten minutes: nine rounds provide repeated successful
+and failed exec observations, while one Refresh candidate remains alive for ten
+minutes. It is long enough to cross several Refresh boundaries without becoming an
+unbounded soak.
+
+Before starting the workload, prepare a fresh collector configuration and launch
+Lintap in a separate foreground shell. Build as the normal user first; the runtime
+launch may require the host's normal eBPF privilege mechanism:
+
+```bash
+DATA_ROOT="/tmp/lintap-linux-exec-data"
+RUNTIME_ROOT="/tmp/lintap-linux-exec-runtime"
+CONFIG="/tmp/lintap-linux-exec-config.json"
+cat > "$CONFIG" <<EOF
+{
+  "DataRoot": "$DATA_ROOT",
+  "RuntimeRoot": "$RUNTIME_ROOT",
+  "DisableMCP": true,
+  "DisableDuckDBUI": true,
+  "DisableETL": false,
+  "WriteToParquet": true,
+  "SerializationIntervalSec": 10,
+  "Execve": true,
+  "Clone": true,
+  "Exit": true,
+  "Network": true,
+  "FileOps": true,
+  "SELinux": false,
+  "ProcessRundown": true,
+  "ProcessRefreshEnabled": true,
+  "ProcessRefreshIntervalMinutes": 1,
+  "ProcessRefreshOffsetMinutes": 0
+}
+EOF
+make -C wintap/wintap all
+sudo env WINTAP_CONFIG_PATH="$CONFIG" WINTAP_DATA_ROOT="$DATA_ROOT" \
+  WINTAP_RUNTIME_ROOT="$RUNTIME_ROOT" make -C wintap/wintap run
+```
+
+Confirm the startup log reports the expected process Refresh settings and runtime
+capabilities before running the workload. Do not reuse a prior data/runtime root for
+this round.
+
+```bash
+RUN_ID="linux-exec-$(date -u +%Y%m%dT%H%M%SZ)"
+QA_ROOT="/tmp/wintap-linux-exec/$RUN_ID"
+DATA_ROOT="/tmp/lintap-linux-exec-data"
+mkdir -p "$QA_ROOT/manifests"
+sudo "$PYTHON" devtools/telemetry_smoke_workload.py \
+  --output "$QA_ROOT/stimulus" \
+  --manifest "$QA_ROOT/manifests/telemetry-workload.json" \
+  --smoke-data-root "$DATA_ROOT" \
+  --rounds 9 --interval 60 --hold 0.25 --refresh-hold 600
+```
+
+Do not pre-create `"$QA_ROOT/stimulus"`; the workload refuses an existing output
+directory. Keep `QA_ROOT` outside the collector data/runtime roots. The capture
+operator must record the actual collector data root, Lintap revision/build, enabled
+sensors, configuration, and UTC start/stop times alongside the retained manifest.
+The smoke parquet is only the workload oracle; raw process parquet and the normal
+DBT inputs remain separate validation artifacts.
 
 **“generated” proves OS stimulus, not sensor capture.** Compare manifest operations
 to existing process/file/network capture tests or query collected parquet after
