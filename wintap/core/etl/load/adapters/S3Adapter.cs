@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -62,20 +63,30 @@ namespace gov.llnl.wintap.core.etl.load.adapters
                 throw new FileNotFoundException("Local file does not exist", localFile);
             }
 
-            string objectKey = getS3ObjectNameForFile(localFileInfo.FullName, parameters);
-            WintapLogger.Log.Append("s3 object key: " + objectKey, LogLevel.Info);
-
             if (bucketName != "NONE")
             {
+                S3UploadAttemptBinding binding;
+                try
+                {
+                    binding = await getOrCreateUploadBinding(localFileInfo, bucketName, parameters);
+                }
+                catch (S3UploadAlreadyCompletedException)
+                {
+                    updateSessionStats();
+                    return true;
+                }
+
+                WintapLogger.Log.Append("s3 object key: " + binding.ObjectKey, LogLevel.Info);
                 PutObjectRequest req = new PutObjectRequest
                 {
                     BucketName = bucketName,
-                    Key = objectKey,
+                    Key = binding.ObjectKey,
                     FilePath = localFile
                 };
 
                 req.Metadata.Add("ComputerName", Environment.MachineName);
                 req.Metadata.Add("Timestamp", DateTime.Now.ToFileTimeUtc().ToString());
+                req.Metadata.Add("UploadIdentity", binding.UploadIdentity);
                 req.CannedACL = S3CannedACL.BucketOwnerFullControl;
 
                 try
@@ -93,6 +104,104 @@ namespace gov.llnl.wintap.core.etl.load.adapters
             }
 
             return fileSent;
+        }
+
+        private async Task<S3UploadAttemptBinding> getOrCreateUploadBinding(
+            FileInfo localFile,
+            string bucketName,
+            Dictionary<string, string> parameters)
+        {
+            S3UploadAttemptBinding binding = S3UploadAttemptBinding.LoadIfPresent(localFile.FullName);
+            if (binding == null)
+            {
+                DateTime uploadTimeUtc = DateTime.UtcNow;
+                string objectKey = getS3ObjectNameForFile(localFile.FullName, uploadTimeUtc, parameters);
+                return S3UploadAttemptBinding.CreateAtomically(localFile.FullName, objectKey, uploadTimeUtc);
+            }
+
+            HeadBindingResult headResult = await inspectExistingBinding(
+                bucketName,
+                binding.ObjectKey,
+                binding.UploadIdentity);
+            S3UploadBindingDisposition disposition = headResult.Status == S3UploadHeadStatus.Exists &&
+                !binding.Matches(localFile, headResult.ContentLength, headResult.UploadIdentity)
+                ? S3UploadBindingDisposition.Reject
+                : S3UploadAttemptPolicy.Decide(headResult.Status);
+            if (disposition == S3UploadBindingDisposition.AlreadyUploaded)
+            {
+                WintapLogger.Log.Append(
+                    "S3 upload already confirmed by durable attempt binding: " + binding.ObjectKey,
+                    LogLevel.Info);
+                throw new S3UploadAlreadyCompletedException();
+            }
+
+            if (disposition == S3UploadBindingDisposition.RebindCurrentKey)
+            {
+                if (!S3UploadAttemptBinding.DeleteIfPresent(localFile.FullName))
+                {
+                    throw new IOException("Could not clear the missing S3 upload binding: " + localFile.FullName);
+                }
+
+                DateTime uploadTimeUtc = DateTime.UtcNow;
+                string objectKey = getS3ObjectNameForFile(localFile.FullName, uploadTimeUtc, parameters);
+                return S3UploadAttemptBinding.CreateAtomically(localFile.FullName, objectKey, uploadTimeUtc);
+            }
+
+            if (disposition == S3UploadBindingDisposition.Reject)
+            {
+                throw new InvalidDataException(
+                    "S3 object exists but does not match the local upload binding: " + binding.ObjectKey);
+            }
+
+            WintapLogger.Log.Append(
+                "S3 upload binding could not be validated; retrying its exact key: " + binding.ObjectKey,
+                LogLevel.Warn);
+            return binding;
+        }
+
+        private async Task<HeadBindingResult> inspectExistingBinding(
+            string bucketName,
+            string objectKey,
+            string uploadIdentity)
+        {
+            try
+            {
+                GetObjectMetadataResponse response = await client.GetObjectMetadataAsync(
+                    new GetObjectMetadataRequest
+                    {
+                        BucketName = bucketName,
+                        Key = objectKey
+                    });
+
+                string remoteIdentity = response.Metadata.Keys
+                    .Where(key => key.Equals("UploadIdentity", StringComparison.OrdinalIgnoreCase) ||
+                                  key.Equals("x-amz-meta-uploadidentity", StringComparison.OrdinalIgnoreCase))
+                    .Select(key => response.Metadata[key])
+                    .FirstOrDefault();
+
+                if (string.IsNullOrWhiteSpace(remoteIdentity))
+                {
+                    return HeadBindingResult.Mismatch(response.ContentLength, remoteIdentity);
+                }
+
+                if (!string.Equals(remoteIdentity, uploadIdentity, StringComparison.Ordinal))
+                {
+                    return HeadBindingResult.Mismatch(response.ContentLength, remoteIdentity);
+                }
+
+                return HeadBindingResult.Exists(response.ContentLength, remoteIdentity);
+            }
+            catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                return HeadBindingResult.NotFound();
+            }
+            catch (Exception ex)
+            {
+                WintapLogger.Log.Append(
+                    "Could not validate prior S3 upload attempt: " + ex.Message,
+                    LogLevel.Warn);
+                return HeadBindingResult.Unknown();
+            }
         }
 
         private AWSCredentials createCredentials(Dictionary<string, string> parameters)
@@ -152,6 +261,36 @@ namespace gov.llnl.wintap.core.etl.load.adapters
             int delay = (int)Math.Min(exponentialDelay, boundedMaxDelay);
             int jitter = Random.Shared.Next(0, Math.Max(1, delay / 4));
             return Math.Min(delay + jitter, boundedMaxDelay);
+        }
+
+        private sealed class HeadBindingResult
+        {
+            internal S3UploadHeadStatus Status { get; }
+            internal long ContentLength { get; }
+            internal string UploadIdentity { get; }
+
+            private HeadBindingResult(S3UploadHeadStatus status, long contentLength, string uploadIdentity)
+            {
+                Status = status;
+                ContentLength = contentLength;
+                UploadIdentity = uploadIdentity;
+            }
+
+            internal static HeadBindingResult Exists(long contentLength, string uploadIdentity) =>
+                new HeadBindingResult(S3UploadHeadStatus.Exists, contentLength, uploadIdentity);
+
+            internal static HeadBindingResult Mismatch(long contentLength, string uploadIdentity) =>
+                new HeadBindingResult(S3UploadHeadStatus.Mismatch, contentLength, uploadIdentity);
+
+            internal static HeadBindingResult NotFound() =>
+                new HeadBindingResult(S3UploadHeadStatus.NotFound, 0, null);
+
+            internal static HeadBindingResult Unknown() =>
+                new HeadBindingResult(S3UploadHeadStatus.Unknown, 0, null);
+        }
+
+        private sealed class S3UploadAlreadyCompletedException : Exception
+        {
         }
 
         private int getIntParameter(Dictionary<string, string> parameters, string key, int defaultValue)

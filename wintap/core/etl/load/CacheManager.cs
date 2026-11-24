@@ -5,6 +5,7 @@
  */
 
 using gov.llnl.wintap.core.etl.extract;
+using gov.llnl.wintap.core.etl.load.adapters.baseclass;
 using gov.llnl.wintap.core.etl.load.interfaces;
 using gov.llnl.wintap.core.etl.model;
 using gov.llnl.wintap.core.etl.shared;
@@ -610,11 +611,21 @@ namespace gov.llnl.wintap.core.etl.load
             {
                 rawSensorDir.Create();
             }
+
+            // Finalized raw_sensor files are the store-and-forward queue. Do not
+            // delete them at startup: an S3 upload may have been interrupted and
+            // its durable upload-attempt sidecar must survive a process restart.
             if (uploaders.Count > 0)
             {
-                foreach (FileInfo fi in rawSensorDir.GetFiles("*.parquet", SearchOption.AllDirectories))
+                foreach (FileInfo sidecar in rawSensorDir.GetFiles("*" + S3UploadAttemptBinding.SidecarSuffix, SearchOption.AllDirectories))
                 {
-                    deleteFile(fi);
+                    string sourceFile = sidecar.FullName.Substring(
+                        0,
+                        sidecar.FullName.Length - S3UploadAttemptBinding.SidecarSuffix.Length);
+                    if (!File.Exists(sourceFile))
+                    {
+                        deleteFile(sidecar);
+                    }
                 }
             }
         }
@@ -658,16 +669,19 @@ namespace gov.llnl.wintap.core.etl.load
             }
             catch (FileNotFoundException)
             {
+                S3UploadAttemptBinding.DeleteIfPresent(path);
                 return RawSensorCacheDeleteOutcome.AlreadyAbsent;
             }
             catch (DirectoryNotFoundException)
             {
+                S3UploadAttemptBinding.DeleteIfPresent(path);
                 return RawSensorCacheDeleteOutcome.AlreadyAbsent;
             }
 
             FileInfo file = new FileInfo(path);
             DirectoryInfo parentDirectory = file.Directory;
             file.Delete();
+            S3UploadAttemptBinding.DeleteIfPresent(path);
             cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor")));
             return RawSensorCacheDeleteOutcome.Deleted;
         }
@@ -708,6 +722,7 @@ namespace gov.llnl.wintap.core.etl.load
         {
             if (!fi.Exists)
             {
+                S3UploadAttemptBinding.DeleteIfPresent(fi.FullName);
                 return true;
             }
 
@@ -717,6 +732,10 @@ namespace gov.llnl.wintap.core.etl.load
                 string fileName = fi.FullName;
                 DirectoryInfo parentDirectory = fi.Directory;
                 fi.Delete();
+                if (!S3UploadAttemptBinding.DeleteIfPresent(fileName))
+                {
+                    WintapLogger.Log.Append("Could not delete S3 upload sidecar after deleting file: " + fileName, LogLevel.Warn);
+                }
                 WintapLogger.Log.Append($"Deleted file after {reason}: {fileName} ({fileLength} bytes)", LogLevel.Info);
                 cleanupEmptyPartitionDirectories(parentDirectory, new DirectoryInfo(Path.Combine(Paths.ParquetDataPath, "raw_sensor")));
                 return true;
