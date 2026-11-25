@@ -1,7 +1,9 @@
 # Wintap.Tests
 
 Partial inventory for the first test-organization slice. This is still one xUnit
-assembly targeting `net10.0-windows10.0.17763.0`; use **Windows and SDK 10.0.402**.
+assembly targeting `net10.0-windows10.0.17763.0`; use **Windows and a stable .NET 10 SDK**.
+`global.json` permits major-10 roll-forward from minimum 10.0.100 and excludes
+prereleases. Record actual `dotnet --version` in verification evidence.
 Linux-subject helpers in this assembly are not native Linux collector coverage.
 Project references, linked sources, copied assets, dependencies, and release-CI
 selection are unchanged.
@@ -49,6 +51,7 @@ part of this organization slice.
 
 ```powershell
 dotnet --list-sdks
+dotnet --version
 dotnet restore tests/Wintap.Tests/Wintap.Tests.csproj --locked-mode
 dotnet build tests/Wintap.Tests/Wintap.Tests.csproj -c Release --no-restore
 dotnet test tests/Wintap.Tests/Wintap.Tests.csproj -c Release --no-build --no-restore --list-tests
