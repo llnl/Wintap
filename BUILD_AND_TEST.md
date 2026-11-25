@@ -21,11 +21,16 @@ Examples below assume you are already in `wintap/wintap` unless noted otherwise.
 
 ## Recommended Commands
 
-Use the repository `global.json` SDK baseline **10.0.402**. All 13 C# projects
+Use a stable .NET 10 SDK for development and Windows testing. The repository
+`global.json` sets minimum **10.0.100**, `latestMinor` roll-forward within major 10,
+and no prereleases. Record actual `dotnet --version` in build/test evidence.
+All 13 C# projects
 target .NET 10 (Windows projects use Windows-qualified TFMs); the Makefile defaults
-to `net10.0`. Linux package builds enforce the exact SDK before cleanup/publish;
-see [`../Lintap/packaging/README.md`](../Lintap/packaging/README.md).
-Distribution-selected SDK patches are not substitutes for package qualification.
+to `net10.0`. Linux packaging/provisioning qualification remains separate: scripts
+may still require exact SDK **10.0.402** and reject the changed shared `global.json`.
+Review those checks before packaging; see
+[`../Lintap/packaging/README.md`](../Lintap/packaging/README.md).
+Permitting an SDK for development does not qualify it for package release.
 
 The standalone MCP helper declares a shared lock graph for `win-x64`, `linux-x64`,
 `linux-arm64`, and the `osx-arm64` cross-build host. For a target-specific locked

@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
+using gov.llnl.wintap.collect.models;
+using gov.llnl.wintap.core.infrastructure;
 
 namespace gov.llnl.wintap.platform.linux.collect
 {
@@ -38,6 +40,53 @@ namespace gov.llnl.wintap.platform.linux.collect
             }
 
             return DateTime.UtcNow;
+        }
+
+        internal static bool TryToUtcFileTimeUtc(
+            ulong timestampNs,
+            long monotonicToRealtimeOffsetNs,
+            out long fileTimeUtc)
+        {
+            fileTimeUtc = 0;
+            if (timestampNs == 0 || monotonicToRealtimeOffsetNs == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                long realtimeNs = checked((long)timestampNs + monotonicToRealtimeOffsetNs);
+                if (realtimeNs <= 0)
+                {
+                    return false;
+                }
+
+                fileTimeUtc = DateTime.UnixEpoch.AddTicks(realtimeNs / 100).ToFileTimeUtc();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal static void ApplyKernelProcessObservation(
+            WintapMessage message,
+            ulong timestampNs,
+            long monotonicToRealtimeOffsetNs)
+        {
+            if (message?.Process == null || timestampNs == 0 || timestampNs > long.MaxValue)
+            {
+                return;
+            }
+
+            message.Process.ObservationTimeMonotonicNanoseconds = (long)timestampNs;
+            message.Process.ObservationClockDomain = "linux-bpf-ktime-monotonic";
+            message.Process.ObservationRunId = RuntimeCapabilities.GetCaptureRunId();
+            if (TryToUtcFileTimeUtc(timestampNs, monotonicToRealtimeOffsetNs, out long fileTimeUtc))
+            {
+                message.Process.ObservationTimeFileTimeUtc = fileTimeUtc;
+            }
         }
 
         [DllImport("libc", SetLastError = true)]

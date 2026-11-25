@@ -4,7 +4,6 @@ using gov.llnl.wintap.core.infrastructure;
 using gov.llnl.wintap.core.shared.helpers;
 using gov.llnl.wintap.platform.linux.infrastructure;
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
 
 namespace gov.llnl.wintap.platform.linux.collect
@@ -82,33 +81,40 @@ namespace gov.llnl.wintap.platform.linux.collect
         }
 
         /// <summary>
-        /// Resolves /proc symlinks to actual executable paths
+        /// Prefer child executable evidence, retaining the existing parent-path fallback.
         /// </summary>
-        private static string ResolveExecutablePath(string path)
+        internal static (string Path, string Name) SelectExecutableMetadata(
+            ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent, string parentComm,
+            Func<string, string> readLinkTarget = null)
         {
-            if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("/proc/"))
-            {
-                return path;
-            }
+            var metadata = SelectExecutableMetadataAndSource(
+                child, parent, parentComm, readLinkTarget);
+            return (metadata.Path, metadata.Name);
+        }
 
-            try
-            {
-                var fileInfo = new FileInfo(path);
-                var linkTarget = fileInfo.ResolveLinkTarget(returnFinalTarget: true);
-                
-                if (linkTarget != null)
-                {
-                    return linkTarget.FullName;
-                }
-            }
-            catch (Exception ex)
-            {
-                WintapLogger.Log.Append(
-                    $"Could not resolve symlink {path}: {ex.Message}", 
-                    LogLevel.Debug);
-            }
+        internal static (string Path, string Name, string Source) SelectExecutableMetadataAndSource(
+            ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent, string parentComm,
+            Func<string, string> readLinkTarget = null)
+        {
+            string childPath = ProcessSensorHelper.ResolveExecutablePath(child.ExecutablePath, readLinkTarget);
+            string parentPath = childPath == null
+                ? ProcessSensorHelper.ResolveExecutablePath(parent.ExecutablePath, readLinkTarget)
+                : null;
+            string path = childPath ?? parentPath;
+            string comm = !string.IsNullOrWhiteSpace(child.Name) ? child.Name
+                : !string.IsNullOrWhiteSpace(parentComm) ? parentComm : parent.Name;
+            string source = childPath != null ? "procfs-exe"
+                : parentPath != null ? "parent-procfs-exe" : "unavailable";
+            return (path ?? "unknown", ProcessSensorHelper.ExtractProcessName(path, comm), source);
+        }
 
-            return path;
+        internal static (string CommandLine, string Source, string Status) SelectCommandLineMetadata(
+            ProcReader.ProcessInfo child, ProcReader.ProcessInfo parent)
+        {
+            return (
+                child.CommandLine ?? string.Empty,
+                child.CommandLineSource ?? ProcReader.ProcfsCommandLineSource,
+                child.CommandLineCaptureStatus ?? ProcReader.CommandLineUnavailable);
         }
 
         private int HandleEvent(IntPtr ctx, IntPtr data, UIntPtr size)
@@ -131,19 +137,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                 // Read child process info (may not be available yet if process executes quickly)
                 var childProcData = ProcReader.ReadProcessInfo(evt.ChildPid);
 
-                // Resolve any /proc paths
-                string childExePath = ResolveExecutablePath(childProcData.ExecutablePath);
-                string parentExePath = ResolveExecutablePath(parentProcData.ExecutablePath);
-
-                // Determine executable path (prefer child, fallback to parent)
-                string executablePath = !string.IsNullOrWhiteSpace(childExePath)
-                                      ? childExePath
-                                      : !string.IsNullOrWhiteSpace(parentExePath)
-                                      ? parentExePath
-                                      : evt.GetParentComm()
-                                      ?? "unknown";
-
-                string processName = ProcessSensorHelper.ExtractProcessName(executablePath, evt.GetParentComm());
+                var metadata = SelectExecutableMetadataAndSource(childProcData, parentProcData, evt.GetParentComm());
+                string executablePath = metadata.Path;
+                string processName = metadata.Name;
+                var commandLine = SelectCommandLineMetadata(childProcData, parentProcData);
 
                 DateTime? startUtc = LinuxLifecycleEvidence.SelectBirthStart(
                     ProcReader.TryConvertBootNsToUtc(kernelStartNs), childProcData.StartTimeUtc);
@@ -171,11 +168,13 @@ namespace gov.llnl.wintap.platform.linux.collect
                     ppid: (int)evt.ParentPid,
                     name: processName,
                     path: executablePath,
-                    commandLine: childProcData.CommandLine != "" 
-                                 ? childProcData.CommandLine 
-                                 : (parentProcData.CommandLine ?? ""),
-                    user: userName
+                    commandLine: commandLine.CommandLine,
+                    user: userName,
+                    commandLineSource: commandLine.Source,
+                    commandLineCaptureStatus: commandLine.Status
                 );
+                message.Process.ExecutablePathSource = metadata.Source;
+                KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
                 // Distinguish inherited birth metadata from a later exec image.
                 // Raw observations remain separate; resolver state must not be

@@ -18,6 +18,7 @@ namespace gov.llnl.wintap.core.etl.transform
     internal class Transformer
     {
         internal static string context = "llnl";
+        private const string publicConnectionContext = "public";
 
 
         internal static ProcessConnIncrData CreateProcessConn(EventBean newEvent, string _pidhash, List<NIC> activeNics)
@@ -33,8 +34,20 @@ namespace gov.llnl.wintap.core.etl.transform
             string hiGW = derivePrivateGateway(loHi.HiIPV4LongVal, hostname, activeNics);
             IpV4Addr loIp = createIpAddr(loHi.LoAddrStr, (uint)loHi.LoIPV4LongVal, loGW);
             IpV4Addr hiIp = createIpAddr(loHi.HiAddrStr, (uint)loHi.HiIPV4LongVal, hiGW);
+            long localIpForIdentity = Converters.ConvertIpToLong(
+                newEvent[inbound ? "destIp" : "srcIp"].ToString());
             IdGenerator idgen = new IdGenerator();
-            string connId = idgen.GenKeyForFive_Tuple_Conn(context, loHi.LoAddrStr, loHi.LoIPV4LongVal, loGW, loHi.LoIPPortInt, loHi.HiAddrStr, loHi.HiIPV4LongVal, hiGW, loHi.HiIPPortInt, loHi.Protocol.ToUpper());
+            string connId = idgen.GenKeyForFive_Tuple_Conn(
+                getConnectionContext(localIpForIdentity, hostname),
+                loHi.LoAddrStr,
+                loHi.LoIPV4LongVal,
+                "",
+                loHi.LoIPPortInt,
+                loHi.HiAddrStr,
+                loHi.HiIPV4LongVal,
+                "",
+                loHi.HiIPPortInt,
+                loHi.Protocol.ToUpper());
             ProcessConnIncrData pci = new ProcessConnIncrData();
             pci.ConnId = connId;
             pci.LocalIpPrivateGateway = loGW;
@@ -99,7 +112,7 @@ namespace gov.llnl.wintap.core.etl.transform
         private static string derivePrivateGateway(long ipAddr, string hostId, List<NIC> activeNics)
         {
             String pg = "";
-            if ((ipAddr >> 24) == 127)
+            if (isLoopback(ipAddr))
             {
                 pg = hostId;
             }
@@ -114,6 +127,19 @@ namespace gov.llnl.wintap.core.etl.transform
                 }
             }
             return pg;
+        }
+
+        private static string getConnectionContext(long localIpAddr, string hostname)
+        {
+            // RFC 1122 reserves all of 127.0.0.0/8 for host-local loopback.
+            // Namespace those tuples by host; every non-loopback tuple shares the
+            // direction-independent public connection namespace.
+            return isLoopback(localIpAddr) ? hostname : publicConnectionContext;
+        }
+
+        private static bool isLoopback(long ipAddr)
+        {
+            return (ipAddr >> 24) == 127;
         }
     }
 }

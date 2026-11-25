@@ -68,6 +68,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         private readonly Func<string, string> translateDevicePath;
         private readonly Func<IReadOnlyList<ProcessRecord>> getProcessHistory;
         private readonly Func<string, int, string, bool> repairParentLinkage;
+        private readonly ProcessRefreshSchedule refreshSchedule;
         private readonly int sidAccountCacheMaxSize;
         private readonly Dictionary<string, string> sidAccountCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Queue<string> sidAccountCacheOrder = new Queue<string>();
@@ -78,6 +79,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
         private ETWTraceEventSource manifestMetricSource;
         private BackgroundWorker manifestMetricWorker;
         private System.Timers.Timer qaCounterTimer;
+        private PeriodicProcessRefreshScheduler refreshScheduler;
         private readonly bool enableQaCounterTimer;
         private long stopWithoutStartCount;
         private long dedupSuppressedCount;
@@ -124,7 +126,8 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             Func<IReadOnlyList<ProcessRecord>> getProcessHistory = null,
             Func<string, int, string, bool> repairParentLinkage = null,
             int sidAccountCacheMaxSize = DefaultSidAccountCacheSize,
-            bool enableQaCounterTimer = true) : base()
+            bool enableQaCounterTimer = true,
+            ProcessRefreshSchedule refreshSchedule = null) : base()
         {
             SensorName = "WindowsProcess";
             EtwProviderId = "SystemTraceControlGuid";
@@ -153,6 +156,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             this.repairParentLinkage = repairParentLinkage ?? EventChannel.TryRepairParentLinkage;
             this.sidAccountCacheMaxSize = Math.Max(1, sidAccountCacheMaxSize);
             this.enableQaCounterTimer = enableQaCounterTimer;
+            this.refreshSchedule = refreshSchedule;
             processHash = new ProcessHash();
             this.genPidHash = genPidHash ?? processHash.GenPidHash;
         }
@@ -204,6 +208,8 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
 
         public override void Stop()
         {
+            refreshScheduler?.Dispose();
+            refreshScheduler = null;
             try
             {
                 updateHeartbeat();
@@ -226,6 +232,19 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             {
                 log($"Windows process sensor shared-kernel unsubscribe failed during shutdown: {ex.Message}", LogLevel.Debug);
             }
+        }
+
+        internal void StartPeriodicRefresh()
+        {
+            if (refreshScheduler != null)
+                return;
+
+            refreshScheduler = new PeriodicProcessRefreshScheduler(
+                refreshSchedule ?? ProcessRefreshSchedule.FromConfig(),
+                () => RunPeriodicRefreshSnapshot(),
+                utcNow,
+                log);
+            refreshScheduler.Start();
         }
 
         private void StartQaCounterTimer()
@@ -475,9 +494,10 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                 // Seed context is established before any boot child is published.
                 startupSeeds = BuildStartupSeeds(liveSystemStart);
                 string rootHash = genPidHash(4, startupSeeds[0].CreateTimeUtc.ToFileTimeUtc());
+                DateTime observationUtc = utcNow().ToUniversalTime();
                 foreach (SnapshotProcessInfo seed in startupSeeds)
                 {
-                    emit(CreateRefreshMessage(seed, new Dictionary<SnapshotProcessInfo, string> { [seed] = rootHash }));
+                    emit(CreateRefreshMessage(seed, new Dictionary<SnapshotProcessInfo, string> { [seed] = rootHash }, observationUtc));
                     Interlocked.Increment(ref snapshotCount);
                 }
                 replayedIdentities = new HashSet<string>(
@@ -509,6 +529,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             deltaAttempted = true;
             try
             {
+                DateTime observationUtc = utcNow().ToUniversalTime();
                 var snapshot = (enumerateSnapshot() ?? Array.Empty<SnapshotProcessInfo>())
                     .Where(process => process != null && process.Pid > 0 && process.Pid != 4 && process.CreateTimeUtc != default)
                     .OrderBy(process => process.CreateTimeUtc).ThenBy(process => process.Pid).ToList();
@@ -568,7 +589,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                     {
                         log($"Windows process snapshot missing compatible parent evidence: pid={process.Pid} parent_pid={process.ParentPid}", LogLevel.Warn);
                     }
-                    emit(CreateRefreshMessage(process, parentPidHashes));
+                    emit(CreateRefreshMessage(process, parentPidHashes, observationUtc));
                     Interlocked.Increment(ref snapshotCount);
                     sent++;
                 }
@@ -607,6 +628,39 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             {
                 log($"Windows process snapshot delta failed; bootstrap/replay history retained: {ex.Message}", LogLevel.Error);
                 log($"Windows process snapshot refresh stack trace: {ex.StackTrace}", LogLevel.Debug);
+                return false;
+            }
+        }
+
+        internal bool RunPeriodicRefreshSnapshot()
+        {
+            try
+            {
+                DateTime observationUtc = utcNow().ToUniversalTime();
+                var snapshot = (enumerateSnapshot() ?? Array.Empty<SnapshotProcessInfo>())
+                    .Where(process => process != null && process.Pid > 0 && process.Pid != 4 && process.CreateTimeUtc != default)
+                    .OrderBy(process => process.CreateTimeUtc).ThenBy(process => process.Pid).ToList();
+                IReadOnlyList<ProcessRecord> history = getProcessHistory() ?? Array.Empty<ProcessRecord>();
+                var chosenHashes = snapshot.ToDictionary(
+                    process => process,
+                    process => genPidHash(process.Pid, process.CreateTimeUtc.ToUniversalTime().ToFileTimeUtc()));
+                Dictionary<SnapshotProcessInfo, string> parentPidHashes = BuildParentPidHashes(snapshot, chosenHashes, history);
+
+                int sent = 0;
+                foreach (SnapshotProcessInfo process in snapshot)
+                {
+                    emit(CreateRefreshMessage(process, parentPidHashes, observationUtc));
+                    Interlocked.Increment(ref snapshotCount);
+                    sent++;
+                }
+
+                log($"Windows periodic process Refresh complete. Refreshed {sent} running processes; observed_at={observationUtc:O}", LogLevel.Info);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log($"Windows periodic process Refresh failed: {ex.Message}", LogLevel.Error);
+                log($"Windows periodic process Refresh stack trace: {ex.StackTrace}", LogLevel.Debug);
                 return false;
             }
         }
@@ -880,7 +934,7 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             foreach (SnapshotProcessInfo processInfo in snapshot)
             {
                 DateTime childBirth = processInfo.CreateTimeUtc.ToUniversalTime();
-                if (processInfo.ParentPid == 4)
+                if (processInfo.ParentPid == 4 && startupSeeds != null && startupSeeds.Count > 0)
                 {
                     parentPidHashes[processInfo] = genPidHash(4, startupSeeds[0].CreateTimeUtc.ToFileTimeUtc());
                     continue;
@@ -922,7 +976,10 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
             return parentPidHashes;
         }
 
-        private WintapMessage CreateRefreshMessage(SnapshotProcessInfo processInfo, Dictionary<SnapshotProcessInfo, string> parentPidHashes)
+        private WintapMessage CreateRefreshMessage(
+            SnapshotProcessInfo processInfo,
+            Dictionary<SnapshotProcessInfo, string> parentPidHashes,
+            DateTime? observationTimeUtc = null)
         {
             DateTime createTimeUtc = processInfo.CreateTimeUtc.ToUniversalTime();
             string name = processInfo.Name ?? string.Empty;
@@ -947,7 +1004,10 @@ namespace gov.llnl.wintap.platform.windows.collect.etw
                     Path = path,
                     CommandLine = commandLine,
                     Arguments = commandLine,
-                    User = user
+                    User = user,
+                    ObservationTimeFileTimeUtc = (observationTimeUtc ?? utcNow()).ToUniversalTime().ToFileTimeUtc(),
+                    ObservationClockDomain = "userspace-utc",
+                    ObservationRunId = RuntimeCapabilities.GetCaptureRunId()
                 }
             };
 

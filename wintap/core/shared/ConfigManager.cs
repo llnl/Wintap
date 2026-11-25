@@ -255,6 +255,9 @@ namespace gov.llnl.wintap.core.shared
         public bool SELinux { get; set; } = true;
         public string FileOpsDenyComms { get; set; } = "";
         public bool ProcessRundown { get; set; } = true;
+        public bool ProcessRefreshEnabled { get; set; } = true;
+        public int ProcessRefreshIntervalMinutes { get; set; } = 60;
+        public int ProcessRefreshOffsetMinutes { get; set; } = 5;
         public bool EnableBpfDiagMonitor { get; set; } = false;
         public bool SkipProcessResolve { get; set; } = false;
         public bool SkipParentProcessResolve { get; set; } = false;

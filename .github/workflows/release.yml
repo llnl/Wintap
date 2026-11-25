@@ -27,7 +27,9 @@ jobs:
         with: { fetch-depth: 0 }
 
       - uses: actions/setup-dotnet@v4
-        with: { global-json-file: global.json }
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'ga'
 
       - name: Version from tag
         shell: pwsh

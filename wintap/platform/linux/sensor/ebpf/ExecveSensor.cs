@@ -14,10 +14,12 @@ namespace gov.llnl.wintap.platform.linux.collect
     internal class ExecveSensor : BaseEbpfSensor
     {
         private const int _SC_CLK_TCK = 2;
+        private const uint SchedExecEventFlag = 0x80000000u;
         private ProcessHash _pidHashGenerator;
         private readonly System.Collections.Generic.List<IntPtr> _additionalLinks = new System.Collections.Generic.List<IntPtr>();
         private static DateTimeOffset? _cachedBootUtc;
         private static long? _cachedClockTicksPerSecond;
+        private long monotonicOffset;
 
         protected override string BpfObjectFileName => "execve_tracer.bpf.o";
         protected override string[] FallbackBpfObjectFileNames => new[] { "execve_tracepoint.bpf.o" };
@@ -33,6 +35,7 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         protected override bool OnStarting()
         {
+            monotonicOffset = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
             // BaseEbpfSensor attaches the primary sys_enter_execve tracepoint program.
             // Attach execveat as well to improve coverage for callers that use execveat.
             try
@@ -76,40 +79,34 @@ namespace gov.llnl.wintap.platform.linux.collect
         }
 
         /// <summary>
-        /// Resolves /proc symlinks to actual executable paths
+        /// Select executable evidence without inferring a path from command-line text.
         /// </summary>
-        private static string ResolveExecutablePath(string path)
+        internal static (string Path, string Name) SelectExecutableMetadata(
+            string filename, string comm, ProcReader.ProcessInfo processInfo,
+            Func<string, string> readLinkTarget = null)
         {
-            if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("/proc/"))
-            {
-                return path;
-            }
-
-            try
-            {
-                // Use .NET's FileInfo to resolve the symlink
-                var fileInfo = new FileInfo(path);
-                
-                // ResolveLinkTarget available in .NET 6+
-                // If you're on an older version, see alternative below
-                var linkTarget = fileInfo.ResolveLinkTarget(returnFinalTarget: true);
-                
-                if (linkTarget != null)
-                {
-                    return linkTarget.FullName;
-                }
-            }
-            catch (Exception ex)
-            {
-                // Process may have already exited, or permission denied
-                // Log at debug level since this is expected behavior
-                WintapLogger.Log.Append(
-                    $"Could not resolve symlink {path}: {ex.Message}", 
-                    LogLevel.Debug);
-            }
-
-            return path; // Return original if resolution fails
+            var metadata = SelectExecutableMetadataAndSource(
+                filename, comm, processInfo, readLinkTarget);
+            return (metadata.Path, metadata.Name);
         }
+
+        internal static (string Path, string Name, string Source) SelectExecutableMetadataAndSource(
+            string filename, string comm, ProcReader.ProcessInfo processInfo,
+            Func<string, string> readLinkTarget = null)
+        {
+            string eventPath = ProcessSensorHelper.ResolveExecutablePath(filename, readLinkTarget);
+            string procfsPath = eventPath == null
+                ? ProcessSensorHelper.ResolveExecutablePath(processInfo.ExecutablePath, readLinkTarget)
+                : null;
+            string path = eventPath ?? procfsPath;
+            string observedComm = !string.IsNullOrWhiteSpace(comm) ? comm : processInfo.Name;
+            string source = eventPath != null ? "exec-event-filename"
+                : procfsPath != null ? "procfs-exe" : "unavailable";
+            return (path ?? "unknown-1", ProcessSensorHelper.ExtractProcessName(path, observedComm), source);
+        }
+
+        internal static string GetExecutionObservationKind(uint flags) =>
+            (flags & SchedExecEventFlag) != 0 ? "exec_success" : "exec_attempt";
 
         private static DateTimeOffset? TryGetBootUtc()
         {
@@ -192,25 +189,10 @@ namespace gov.llnl.wintap.platform.linux.collect
                 string rawComm = evt.GetComm();
                 string rawCmdline = procData.CommandLine;
                 
-                // Resolve /proc symlinks FIRST
-                string resolvedFilename = ResolveExecutablePath(rawFilename);
-                
-                // Build executable path with multiple fallbacks
-                // Use the resolved filename instead of raw
-                string executablePath = !string.IsNullOrWhiteSpace(resolvedFilename) ? resolvedFilename
-                                      : !string.IsNullOrWhiteSpace(procData.ExecutablePath) ? procData.ExecutablePath
-                                      : !string.IsNullOrWhiteSpace(rawCmdline) ? ProcessSensorHelper.ExtractPathFromCmdline(rawCmdline)
-                                      : "unknown-1";
-                
-                // Extract process name with comm as fallback
-                string processName = ProcessSensorHelper.ExtractProcessName(executablePath, rawComm);
+                var metadata = SelectExecutableMetadataAndSource(rawFilename, rawComm, procData);
+                string executablePath = metadata.Path;
+                string processName = metadata.Name;
                 int parentPid = procData.PPid > 0 ? procData.PPid : (int)evt.PPid;
-                
-                // Final safety: if process name is STILL empty, try cmdline
-                if (string.IsNullOrWhiteSpace(processName) || processName == "unknown-1")
-                {
-                    processName = ProcessSensorHelper.ExtractProcessNameFromCmdline(rawCmdline, "unknown-2");
-                }
 
                 // Use process start time for EventTime so PidHash is stable and matches
                 // other lifecycle events (clone/exit) and handles PID reuse correctly.
@@ -237,11 +219,16 @@ namespace gov.llnl.wintap.platform.linux.collect
                     user: userName,
                     arguments: !string.IsNullOrEmpty(procData.Home) 
                         ? $"HOME={procData.Home} SHELL={procData.Shell}" 
-                        : null
+                        : null,
+                    commandLineSource: procData.CommandLineSource,
+                    commandLineCaptureStatus: procData.CommandLineCaptureStatus
                 );
+                message.Process.ExecutionObservationKind = GetExecutionObservationKind(evt.Flags);
+                message.Process.ExecutablePathSource = metadata.Source;
+                KernelTimestampConverter.ApplyKernelProcessObservation(message, evt.TimestampNs, monotonicOffset);
 
                 // Breadcrumb for start-event source.
-                if ((evt.Flags & 0x80000000u) != 0)
+                if ((evt.Flags & SchedExecEventFlag) != 0)
                 {
                     message.Process.Arguments = string.IsNullOrWhiteSpace(message.Process.Arguments)
                         ? "PROC_START_SRC=sched_exec"

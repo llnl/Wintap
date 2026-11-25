@@ -3,6 +3,7 @@ using gov.llnl.wintap.core.infrastructure;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -51,7 +52,19 @@ namespace gov.llnl.wintap.core.etl.load.adapters.baseclass
         /// </summary>
         protected string getS3ObjectNameForFile(string localFile, Dictionary<string, string> parameters)
         {
-            string relativePath = getParquetRelativePathForFile(localFile).Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+            return getS3ObjectNameForFile(localFile, DateTime.UtcNow, parameters);
+        }
+
+        /// <summary>
+        /// Converts a local parquet path to an S3 key using the supplied UTC upload
+        /// time for the canonical day/hour partition. The caller should capture the
+        /// time once per publication attempt and reuse the resulting key for retries.
+        /// </summary>
+        protected string getS3ObjectNameForFile(string localFile, DateTime uploadTimeUtc, Dictionary<string, string> parameters)
+        {
+            string relativePath = RewriteS3UploadPartition(
+                getParquetRelativePathForFile(localFile),
+                uploadTimeUtc);
             string objectPrefix = getConfiguredPathPrefix(parameters).Replace('\\', '/').Trim('/');
 
             if (string.IsNullOrWhiteSpace(objectPrefix))
@@ -60,6 +73,41 @@ namespace gov.llnl.wintap.core.etl.load.adapters.baseclass
             }
 
             return objectPrefix + "/" + relativePath.TrimStart('/');
+        }
+
+        /// <summary>
+        /// Rewrites only the canonical raw_sensor day/hour path segments. The event
+        /// type, protocol partition, filename, and all other path segments remain
+        /// unchanged.
+        /// </summary>
+        internal static string RewriteS3UploadPartition(string relativePath, DateTime uploadTimeUtc)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                throw new ArgumentException("A relative parquet path is required.", nameof(relativePath));
+            }
+
+            DateTime utc = uploadTimeUtc.Kind == DateTimeKind.Local
+                ? uploadTimeUtc.ToUniversalTime()
+                : DateTime.SpecifyKind(uploadTimeUtc, DateTimeKind.Utc);
+            string normalizedPath = relativePath.Replace('\\', '/');
+            string[] segments = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            int rawSensorIndex = Array.FindIndex(segments, segment =>
+                segment.Equals("raw_sensor", StringComparison.OrdinalIgnoreCase));
+            int dayIndex = Array.FindIndex(segments, segment =>
+                segment.StartsWith("dayPK=", StringComparison.OrdinalIgnoreCase));
+            int hourIndex = Array.FindIndex(segments, segment =>
+                segment.StartsWith("hourPK=", StringComparison.OrdinalIgnoreCase));
+
+            if (rawSensorIndex < 0 || dayIndex != rawSensorIndex + 2 || hourIndex != dayIndex + 1)
+            {
+                throw new FormatException(
+                    "The parquet path does not contain a canonical raw_sensor/dayPK/hourPK partition: " + relativePath);
+            }
+
+            segments[dayIndex] = "dayPK=" + utc.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            segments[hourIndex] = "hourPK=" + utc.ToString("HH", CultureInfo.InvariantCulture);
+            return string.Join('/', segments);
         }
 
         /// <summary>

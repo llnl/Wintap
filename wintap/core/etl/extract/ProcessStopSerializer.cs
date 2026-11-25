@@ -69,10 +69,16 @@ namespace gov.llnl.wintap.core.etl.extract
             procWD.PidHash = endedProcess.PidHash;
             procWD.Hostname = host.Hostname;
             procWD.EventTime = endedProcess.EventTime;
+            procWD.ReceiveTime = endedProcess.ReceiveTime;
+            procWD.ObservationTimeFileTimeUtc = endedProcess.Process.ObservationTimeFileTimeUtc;
+            procWD.ObservationTimeMonotonicNanoseconds = endedProcess.Process.ObservationTimeMonotonicNanoseconds;
+            procWD.ObservationClockDomain = endedProcess.Process.ObservationClockDomain;
+            procWD.ObservationRunId = endedProcess.Process.ObservationRunId;
             procWD.CommitCharge = endedProcess.Process.CommitCharge;
             procWD.CommitPeak = endedProcess.Process.CommitPeak;
             procWD.CPUCycleCount = endedProcess.Process.CPUCycleCount;
             procWD.ExitCode = endedProcess.Process.ExitCode;
+            procWD.ExitCodeCaptureStatus = endedProcess.Process.ExitCodeCaptureStatus;
             procWD.CPUUtilization = endedProcess.Process.CPUUtilization;
             procWD.HardFaultCount = endedProcess.Process.HardFaultCount;
             procWD.ReadOperationCount = endedProcess.Process.ReadOperationCount;

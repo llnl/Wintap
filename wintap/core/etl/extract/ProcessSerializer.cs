@@ -58,8 +58,17 @@ namespace gov.llnl.wintap.core.etl.extract
 
         private void handleStartEvent(WintapMessage wintapMessage)
         {
-            ProcessStartData procWD = createProcessObject(wintapMessage.PID, wintapMessage.Process.ParentPID, wintapMessage.EventTime, wintapMessage.Process.Path, wintapMessage.Process.CommandLine, wintapMessage.Process.User, wintapMessage.Process.MD5, wintapMessage.Process.SHA2, wintapMessage.MessageType.ToString(), wintapMessage.Process.CommandLine, wintapMessage.PidHash, wintapMessage.Process.ParentPidHash, wintapMessage.ActivityType.ToString(), wintapMessage.AgentId);
+            ProcessStartData procWD = createProcessObject(wintapMessage.PID, wintapMessage.Process.ParentPID, wintapMessage.EventTime, wintapMessage.Process.Path, wintapMessage.Process.CommandLine, wintapMessage.Process.User, wintapMessage.Process.MD5, wintapMessage.Process.SHA2, wintapMessage.MessageType.ToString(), wintapMessage.Process.CommandLine, wintapMessage.PidHash, wintapMessage.Process.ParentPidHash, wintapMessage.ActivityType.ToString(), wintapMessage.AgentId, wintapMessage.Process.Name);
             procWD.Hostname = host.Hostname;
+            procWD.ReceiveTime = wintapMessage.ReceiveTime;
+            procWD.ObservationTimeFileTimeUtc = wintapMessage.Process.ObservationTimeFileTimeUtc;
+            procWD.ObservationTimeMonotonicNanoseconds = wintapMessage.Process.ObservationTimeMonotonicNanoseconds;
+            procWD.ObservationClockDomain = wintapMessage.Process.ObservationClockDomain;
+            procWD.ObservationRunId = wintapMessage.Process.ObservationRunId;
+            procWD.CommandLineSource = wintapMessage.Process.CommandLineSource;
+            procWD.CommandLineCaptureStatus = wintapMessage.Process.CommandLineCaptureStatus;
+            procWD.ExecutionObservationKind = wintapMessage.Process.ExecutionObservationKind;
+            procWD.ExecutablePathSource = wintapMessage.Process.ExecutablePathSource;
             ApplyStartProvenance(procWD, wintapMessage.Process.Arguments);
 
             try
@@ -87,15 +96,20 @@ namespace gov.llnl.wintap.core.etl.extract
                 ? sources[0] : null;
         }
 
-        private ProcessStartData createProcessObject(int pid, int parentPid, long eventTime, string path, string commandLine, string user, string md5, string sha2, string msgType, string cmdline, string pidHash, string parentPidHash, string activityType, string agentId)
+        private ProcessStartData createProcessObject(int pid, int parentPid, long eventTime, string path, string commandLine, string user, string md5, string sha2, string msgType, string cmdline, string pidHash, string parentPidHash, string activityType, string agentId, string processName)
         {
-            ProcessStartData procWD = new ProcessStartData(parentPidHash, parentPid, pid, pidHash, parseProcessName(path), eventTime, path, user, getSIDForUser(user), md5, sha2,cmdline, agentId);
+            ProcessStartData procWD = new ProcessStartData(parentPidHash, parentPid, pid, pidHash, ProjectProcessName(path, processName, OperatingSystem.IsLinux()), eventTime, path, user, getSIDForUser(user), md5, sha2,cmdline, agentId);
             procWD.ActivityType = activityType;
             procWD.Hostname = host.Hostname;
             return procWD;
         }
 
-        private string parseProcessName(string path)
+        internal static string ProjectProcessName(string path, string processName, bool isLinux)
+        {
+            return isLinux ? (string.IsNullOrWhiteSpace(processName) ? "unknown" : processName) : parseProcessName(path);
+        }
+
+        private static string parseProcessName(string path)
         {
             string procName = "PARSE_ERROR";
             try

@@ -51,16 +51,16 @@ def worker_command(root, case, *extra):
             "--output", str(root), "--worker", case, *extra]
 
 
-def child(root, case, *extra):
+def child(root, case, *extra, timeout=30):
     result = subprocess.run(worker_command(root, case, *extra), capture_output=True,
-                            text=True, timeout=30)
+                            text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(f"{case} exit {result.returncode}: {result.stderr}")
 
 
-def files(root, case):
-    directory = root / "files" / case
-    directory.mkdir()
+def files(root, case, round_tag):
+    directory = root / "files" / case / round_tag
+    directory.mkdir(parents=True)
     path = directory / "created.bin"
     fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     try:
@@ -231,13 +231,52 @@ def network_pair(root, protocol, ipv6=False, connected=None):
         server.communicate()
 
 
+def exec_worker(root, case, args):
+    """Exercise failed and successful exec transitions within one PID."""
+    stage = args.exec_stage
+    token = args.arg_token or f"stage-{stage}"
+    name_process(f"{case[:9]}_s{stage}")
+    emit(root, case, "worker-start", commandLine=sys.argv,
+         expectedActivity="Start", expectedExecutionObservation=
+         "initial" if stage == 0 else "exec_success", execStage=stage,
+         argumentToken=token, roundTag=args.round_tag)
+    time.sleep(args.hold)
+
+    if case == "wt_execfail" and stage == 0:
+        missing = root / "bin" / "missing-executable"
+        try:
+            os.execv(str(missing), [str(missing), "--failed-attempt", token])
+        except OSError as error:
+            emit(root, case, "exec-attempt-failed", attemptedPath=str(missing),
+                 expectedExecutionObservation="exec_attempt", execOutcome="failed",
+                 execStage=stage, argumentToken=token, errno=error.errno,
+                 roundTag=args.round_tag)
+
+    if stage < args.exec_count - 1:
+        next_stage = stage + 1
+        next_token = f"stage-{next_stage}"
+        command = worker_command(
+            root, case, "--hold", str(args.hold), "--round-tag", args.round_tag,
+            "--exec-stage", str(next_stage), "--exec-count", str(args.exec_count),
+            "--arg-token", next_token,
+        )
+        os.execv(str(executable(root, case)), command)
+
+
 def worker(args):
     root, case = args.output, args.worker
     name_process(case)
-    emit(root, case, "worker-start", commandLine=sys.argv, expectedActivity="Start")
+    if case in ("wt_reexec", "wt_execfail"):
+        exec_worker(root, case, args)
+        if args.exec_stage == args.exec_count - 1:
+            emit(root, case, "worker-exit", expectedActivity="Stop", roundTag=args.round_tag)
+        return
+    emit(root, case, "worker-start", commandLine=sys.argv,
+         expectedActivity="Start", roundTag=args.round_tag,
+         expectedRefreshCandidate=case == "wt_refresh")
     time.sleep(args.hold)
     if case == "wt_file":
-        files(root, case)
+        files(root, case, args.round_tag)
     elif "tcp" in case or "udp" in case:
         network(root, case, args.port, "6" in case)
     elif case == "wt_fork":
@@ -252,7 +291,9 @@ def worker(args):
     elif case == "wt_forkexec":
         pid = os.fork()
         if pid == 0:
-            os.execv(str(executable(root, "wt_execimage")), worker_command(root, "wt_execimage"))
+            os.execv(str(executable(root, "wt_execimage")),
+                     worker_command(root, "wt_execimage", "--hold", str(args.hold),
+                                    "--round-tag", args.round_tag))
         assert os.waitpid(pid, 0)[1] == 0
     elif case == "wt_spawn":
         command = worker_command(root, "wt_spawnchild")
@@ -267,8 +308,8 @@ def worker(args):
         thread = threading.Thread(target=body)
         thread.start()
         thread.join()
-    time.sleep(args.hold)
-    emit(root, case, "worker-exit", expectedActivity="Stop")
+    time.sleep(args.lifetime if args.lifetime is not None else args.hold)
+    emit(root, case, "worker-exit", expectedActivity="Stop", roundTag=args.round_tag)
 
 
 @smoke_run("telemetry-workload")
@@ -278,13 +319,31 @@ def main():
     parser.add_argument("--clone-helper", type=Path, help="optional compiled clone_lifecycle_workload; one round")
     parser.add_argument("--ipv6", action="store_true", help="extra loopback probes; Linux network capture currently IPv4")
     parser.add_argument("--hold", type=float, default=0.2, help="worker dwell seconds (0–10)")
+    parser.add_argument("--rounds", type=int, default=1, help="repeat the named stimulus set (1–120)")
+    parser.add_argument("--interval", type=float, default=0,
+                        help="seconds between repeated stimulus rounds (0–3600)")
+    parser.add_argument("--refresh-hold", type=float, default=0,
+                        help="keep one refresh candidate alive for this many seconds (0–600)")
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--round-tag", default="round-1", help=argparse.SUPPRESS)
+    parser.add_argument("--lifetime", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--exec-stage", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--exec-count", type=int, default=3, help=argparse.SUPPRESS)
+    parser.add_argument("--arg-token", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
         parser.error("This workload targets Linux; use the existing platform capture tests elsewhere")
     if not 0 <= args.hold <= 10:
         parser.error("--hold must be between 0 and 10")
+    if not 1 <= args.rounds <= 120:
+        parser.error("--rounds must be between 1 and 120")
+    if not 0 <= args.interval <= 3600:
+        parser.error("--interval must be between 0 and 3600")
+    if not 0 <= args.refresh_hold <= 600:
+        parser.error("--refresh-hold must be between 0 and 600")
+    if args.worker and not 0 <= args.exec_stage < args.exec_count:
+        parser.error("--exec-stage must be within --exec-count")
     args.output = (args.output or Path.cwd() / f"telemetry-smoke-{uuid.uuid4().hex[:8]}").resolve()
     if args.worker:
         worker(args)
@@ -294,12 +353,16 @@ def main():
     for directory in ("bin", "files", "evidence"):
         (root / directory).mkdir()
     report = dict(schemaVersion=1, runId=uuid.uuid4().hex, startedAtUtc=now(), output=str(root),
-                  stimulusOnly=True, cases=[], limitations=[
+                  stimulusOnly=True, workloadOptions=dict(rounds=args.rounds, intervalSeconds=args.interval,
+                                                          holdSeconds=args.hold,
+                                                          refreshHoldSeconds=args.refresh_hold),
+                  cases=[], limitations=[
                       "Names are runtime comm/exec aliases; fork birth inherits parent name. Match manifest PID/time/path/port too.",
-                      "Interpreter resolver may normalize aliases to python. Command line includes case and run directory.",
-                      "No one-to-one syscall/row guarantee: normal ETL aggregates; inspect HOST capabilities and collector filters.",
-                      "Rename/truncate are extra stimuli, not Linux FileOps event types. IPv6 is not currently certified.",
-                      "Refresh needs collector rundown timing; HOST and SELinux are not induced by this workload."])
+                       "Interpreter resolver may normalize aliases to python. Command line includes case and run directory.",
+                       "No one-to-one syscall/row guarantee: normal ETL aggregates; inspect HOST capabilities and collector filters.",
+                       "Rename/truncate are extra stimuli, not Linux FileOps event types. IPv6 is not currently certified.",
+                       "Refresh needs collector rundown timing; HOST and SELinux are not induced by this workload.",
+                       "Execution expectations preserve failed attempts and same-PID successful exec stages; they do not assert one telemetry row per event."])
     def run(label, action):
         try:
             action()
@@ -307,15 +370,40 @@ def main():
         except Exception as error:
             report["cases"].append(dict(case=label, status="failed", reason=str(error)))
     # Precreate exec aliases before forking; worker children never share file setup.
-    for case in ("wt_execimage", "wt_spawnchild"):
+    for case in ("wt_execimage", "wt_spawnchild", "wt_reexec", "wt_execfail"):
         executable(root, case)
-    for case in ("wt_fork", "wt_forkexec", "wt_spawn", "wt_threads", "wt_file"):
-        run(case, lambda case=case: child(root, case, "--hold", str(args.hold)))
-    for protocol in ("tcp", "udp"):
-        run(f"{protocol}-ipv4", lambda protocol=protocol: network_pair(root, protocol))
-    if args.ipv6:
+    refresh = None
+    if args.refresh_hold:
+        refresh = subprocess.Popen(
+            worker_command(root, "wt_refresh", "--hold", str(args.hold),
+                           "--lifetime", str(args.refresh_hold), "--round-tag", "refresh-cohort"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    for round_number in range(1, args.rounds + 1):
+        round_tag = f"round-{round_number:03d}"
+        common = ("--hold", str(args.hold), "--round-tag", round_tag)
+        for case in ("wt_fork", "wt_forkexec", "wt_spawn", "wt_threads", "wt_file",
+                     "wt_reexec", "wt_execfail"):
+            extra = common + (("--exec-count", "2") if case == "wt_execfail" else ())
+            run(case, lambda case=case, extra=extra: child(root, case, *extra))
         for protocol in ("tcp", "udp"):
-            run(f"{protocol}-ipv6-extra", lambda protocol=protocol: network_pair(root, protocol, True))
+            run(f"{protocol}-ipv4", lambda protocol=protocol: network_pair(root, protocol))
+        if args.ipv6:
+            for protocol in ("tcp", "udp"):
+                run(f"{protocol}-ipv6-extra", lambda protocol=protocol: network_pair(root, protocol, True))
+        if round_number != args.rounds and args.interval:
+            time.sleep(args.interval)
+
+    if refresh:
+        try:
+            _, stderr = refresh.communicate(timeout=args.refresh_hold + 30)
+            if refresh.returncode:
+                raise RuntimeError(f"wt_refresh exit {refresh.returncode}: {stderr}")
+        finally:
+            if refresh.poll() is None:
+                refresh.kill()
+                refresh.communicate()
+        report["refreshHoldSeconds"] = args.refresh_hold
     if args.clone_helper:
         def native():
             environment = dict(os.environ, WINTAP_SMOKE_NAMES="1")
@@ -349,9 +437,22 @@ def main():
         if domain != "process":
             activities = [a for a in activities if a not in ("Start", "Stop")]
         selector = dict(case=case, domain=domain, pids=sorted({e["pid"] for e in events if e.get("expectedProcessStart") is not False}),
-                              threadIds=[e["tid"] for e in events if e.get("expectedProcessStart") is False],
-                              startedAtUtc=report["startedAtUtc"], completedAtUtc=report["completedAtUtc"],
-                              expectedActivities=activities, paths=[e["path"] for e in events if "path" in e])
+                               threadIds=[e["tid"] for e in events if e.get("expectedProcessStart") is False],
+                               startedAtUtc=report["startedAtUtc"], completedAtUtc=report["completedAtUtc"],
+                               expectedActivities=activities, paths=[e["path"] for e in events if "path" in e])
+        execution = [
+            dict(pid=e["pid"], tid=e["tid"], observation=e["expectedExecutionObservation"],
+                 stage=e.get("execStage"), token=e.get("argumentToken"),
+                 outcome=e.get("execOutcome"), attemptedPath=e.get("attemptedPath"))
+            for e in events if e.get("expectedExecutionObservation")
+        ]
+        if execution:
+            selector["executionExpectations"] = execution
+        refresh_candidates = [e for e in events if e.get("expectedRefreshCandidate")]
+        if refresh_candidates:
+            selector["refreshCandidates"] = [dict(pid=e["pid"], tid=e["tid"],
+                                                   roundTag=e.get("roundTag"))
+                                              for e in refresh_candidates]
         if domain == 'file':
             by_path = {}
             for event in events:

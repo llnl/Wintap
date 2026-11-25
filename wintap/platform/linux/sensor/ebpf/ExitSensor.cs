@@ -30,6 +30,15 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         protected override LibBpf.RingBufferCallback GetRingBufferCallback() => HandleEvent;
 
+        internal static string GetExitCodeCaptureStatus(string loadedTier) =>
+            string.Equals(loadedTier, "core", StringComparison.Ordinal)
+                ? "kernel-wait-status" : "unavailable";
+
+        internal static void ApplyObservationTiming(
+            WintapMessage message, ulong timestampNs, long monotonicToRealtimeOffsetNs) =>
+            KernelTimestampConverter.ApplyKernelProcessObservation(
+                message, timestampNs, monotonicToRealtimeOffsetNs);
+
         protected override bool OnStarting()
         {
             monotonicOffset = KernelTimestampConverter.ComputeMonotonicToRealtimeOffsetNanoseconds();
@@ -119,6 +128,8 @@ namespace gov.llnl.wintap.platform.linux.collect
                     user: userName,
                     exitCode: evt.ExitCode
                 );
+                message.Process.ExitCodeCaptureStatus = GetExitCodeCaptureStatus(LoadedTier);
+                ApplyObservationTiming(message, evt.TimestampNs, monotonicOffset);
 
                 DateTime? kernelStart = ProcReader.TryConvertBootNsToUtc(starts.BootNs);
                 DateTime? canonicalStart = LinuxLifecycleEvidence.SelectBirthStart(kernelStart, procData.StartTimeUtc);

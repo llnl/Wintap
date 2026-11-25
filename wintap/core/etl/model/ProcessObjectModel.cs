@@ -91,9 +91,17 @@ internal class ProcessStartData : SensorData
 
     public string ActivityType { get; set; }
     public string CommandLine { get { return _commandLine; } }
+    public string CommandLineSource { get; internal set; }
+    public string CommandLineCaptureStatus { get; internal set; }
+    public string ExecutionObservationKind { get; internal set; }
+    public string ExecutablePathSource { get; internal set; }
     // Producer lifecycle/image provenance, not a unique birth or success claim.
     // Missing/unsupported source remains null; do not decorate CommandLine.
     public string ProcessStartSource { get; internal set; }
+    public long? ObservationTimeFileTimeUtc { get; internal set; }
+    public long? ObservationTimeMonotonicNanoseconds { get; internal set; }
+    public string ObservationClockDomain { get; internal set; }
+    public string ObservationRunId { get; internal set; }
     public string Hostname { get; set; }
 
     public string UniqueProcessKey

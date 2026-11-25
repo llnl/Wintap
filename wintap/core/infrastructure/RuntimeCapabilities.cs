@@ -175,6 +175,15 @@ namespace gov.llnl.wintap.core.infrastructure
             lock (Gate) return completedJson ?? (receipt == null ? null : JsonSerializer.Serialize(receipt, JsonOptions));
         }
 
+        public static string GetCaptureRunId()
+        {
+            lock (Gate)
+            {
+                Ensure();
+                return receipt.CaptureRunId;
+            }
+        }
+
         public static string GetSensorJson(string key)
         {
             lock (Gate) return JsonSerializer.Serialize(new { schemaVersion = 1, captureRunId = receipt?.CaptureRunId,

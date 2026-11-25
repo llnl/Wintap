@@ -181,6 +181,7 @@ namespace gov.llnl.wintap.core.etl.load
             values["ActivityType"] = message.ActivityType.ToString();
             values["PID"] = message.PID;
             values["EventTime"] = message.EventTime;
+            values["ReceiveTime"] = message.ReceiveTime;
             values["AgentId"] = message.AgentId ?? string.Empty;
             values["PidHash"] = message.PidHash ?? string.Empty;
             values["ProcessName"] = message.ProcessName ?? string.Empty;
@@ -211,15 +212,29 @@ namespace gov.llnl.wintap.core.etl.load
             foreach (PropertyInfo property in source.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
             {
                 object value = property.GetValue(source);
+                string fieldName = prefix + "_" + property.Name;
                 if (value == null)
                 {
+                    // These nullable process fields must be present even when a
+                    // direct-process row has no value. Otherwise the first row
+                    // can omit the column entirely and erase later populated
+                    // values from the batch schema.
+                    if (prefix == "Process" &&
+                        (property.Name == "ObservationTimeFileTimeUtc" ||
+                         property.Name == "ObservationTimeMonotonicNanoseconds" ||
+                         property.Name == "ExecutionObservationKind" ||
+                         property.Name == "ExecutablePathSource" ||
+                         property.Name == "ExitCodeCaptureStatus"))
+                    {
+                        values[fieldName] = null;
+                    }
                     continue;
                 }
 
                 Type valueType = Nullable.GetUnderlyingType(value.GetType()) ?? value.GetType();
                 if (valueType.IsPrimitive || valueType.IsEnum || valueType == typeof(string) || valueType == typeof(decimal) || valueType == typeof(DateTime) || valueType == typeof(Guid))
                 {
-                    values[prefix + "_" + property.Name] = valueType.IsEnum ? value.ToString() : value;
+                    values[fieldName] = valueType.IsEnum ? value.ToString() : value;
                 }
             }
         }

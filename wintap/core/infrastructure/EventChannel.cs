@@ -643,7 +643,7 @@ namespace gov.llnl.wintap.core.infrastructure
 
         public static ProcessRecord GetProcessHistory(int _pid,  DateTime _eventTime)
         {
-            return _processResolver.ResolveProcessAtTime(_pid, _eventTime.ToUniversalTime());
+            return _processResolver?.ResolveProcessAtTime(_pid, _eventTime.ToUniversalTime());
         }
 
         /// <summary>

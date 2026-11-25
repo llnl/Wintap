@@ -218,9 +218,29 @@ namespace gov.llnl.wintap.collect.models
             public string Name { get; set; }
             public string Path { get; set; }
             public string CommandLine { get; set; }
+            /// <summary>Producer boundary used to observe CommandLine.</summary>
+            public string CommandLineSource { get; set; }
+            /// <summary>Producer-reported capture outcome for CommandLine.</summary>
+            public string CommandLineCaptureStatus { get; set; }
+            /// <summary>
+            /// Producer classification of an exec observation. Linux exec
+            /// producers use exec_attempt or exec_success; unsupported producers
+            /// leave this null.
+            /// </summary>
+            public string ExecutionObservationKind { get; set; }
+            /// <summary>
+            /// Producer evidence source for Path. Linux process producers use a
+            /// bounded vocabulary; unsupported producers leave this null.
+            /// </summary>
+            public string ExecutablePathSource { get; set; }
             public string Arguments { get; set; }
             public string User { get; set; }
             public long ExitCode { get; set; }
+            /// <summary>
+            /// Producer-reported capture status for ExitCode. Unsupported
+            /// producers leave this null.
+            /// </summary>
+            public string ExitCodeCaptureStatus { get; set; }
             public long CPUCycleCount { get; set; }
             public int CPUUtilization { get; set; }
             public long CommitCharge { get; set; }
@@ -235,6 +255,24 @@ namespace gov.llnl.wintap.collect.models
             public string UniqueProcessKey { get; set; }
             public string MD5 { get; set; }
             public string SHA2 { get; set; }
+
+            /// <summary>
+            /// UTC observation/occurrence time represented as a Windows FILETIME.
+            /// This is independent of the canonical process birth in EventTime.
+            /// </summary>
+            public long? ObservationTimeFileTimeUtc { get; set; }
+
+            /// <summary>
+            /// Exact producer-supplied monotonic timestamp in nanoseconds, when
+            /// available. Its scope is identified by ObservationRunId.
+            /// </summary>
+            public long? ObservationTimeMonotonicNanoseconds { get; set; }
+
+            /// <summary>Clock source for the observation timestamp.</summary>
+            public string ObservationClockDomain { get; set; }
+
+            /// <summary>Capture-run scope for monotonic timestamp comparison.</summary>
+            public string ObservationRunId { get; set; }
         }
 
         public class TcpConnectionObject : WintapBase

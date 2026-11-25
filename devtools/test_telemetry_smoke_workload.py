@@ -13,7 +13,9 @@ class TelemetryWorkloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "run"
             command = [sys.executable, str(Path(__file__).with_name("telemetry_smoke_workload.py")),
-                       "--output", str(output), "--hold", "0.01", "--manifest", str(Path(directory) / "run.json")]
+                       "--output", str(output), "--hold", "0.01", "--rounds", "2",
+                       "--interval", "0.01", "--refresh-hold", "0.01",
+                       "--manifest", str(Path(directory) / "run.json")]
             result = subprocess.run(command, capture_output=True, text=True, timeout=45)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             manifest = json.loads((output / "manifest.json").read_text())
@@ -22,8 +24,8 @@ class TelemetryWorkloadTests(unittest.TestCase):
             self.assertTrue(portable["selectors"])
             udp = [s for s in portable['selectors'] if s['domain'] == 'network' and 'udp4' in s['case']]
             self.assertEqual(len(udp), 4)  # Two independent client/server modes.
-            self.assertEqual(len({pid for s in udp for pid in s['pids']}), 4)
-            self.assertTrue(all(len(s['endpointExpectations']) == 1 for s in udp))
+            self.assertEqual(len({pid for s in udp for pid in s['pids']}), 8)
+            self.assertTrue(all(len(s['endpointExpectations']) == 2 for s in udp))
             self.assertTrue(all(s['endpointExpectations'][0]['protocol'] == 'udp' for s in udp))
             files = [s for s in portable['selectors'] if s['domain'] == 'file']
             self.assertTrue(all(s['pathExpectations'] for s in files))
@@ -34,7 +36,8 @@ class TelemetryWorkloadTests(unittest.TestCase):
             self.assertTrue(portable["host"]["hostname"])
             self.assertTrue(manifest["stimulusOnly"])
             generated = {row["case"] for row in manifest["cases"] if row["status"] == "generated"}
-            self.assertEqual(generated, {"wt_fork", "wt_forkexec", "wt_spawn", "wt_threads", "wt_file", "tcp-ipv4", "udp-ipv4"})
+            self.assertEqual(generated, {"wt_fork", "wt_forkexec", "wt_spawn", "wt_threads", "wt_file",
+                                         "wt_reexec", "wt_execfail", "tcp-ipv4", "udp-ipv4"})
             events = manifest["events"]
             self.assertTrue(any(row["case"] == "wt_forkchild" and row.get("noExec") for row in events))
             thread = next(row for row in events if row["case"] == "wt_thread")
@@ -49,6 +52,20 @@ class TelemetryWorkloadTests(unittest.TestCase):
                              "TcpIpConnect", "TcpIpAccept", "TcpIpSend", "TcpIpRecv", "TcpIpDisconnect",
                              "UdpIpSend", "UdpIpRecv"} <= expected)
             self.assertFalse(list((output / "files").rglob("*.bin")))
+            reexec = next(s for s in portable["selectors"] if s["case"] == "wt_reexec")
+            reexec_expectations = reexec["executionExpectations"]
+            self.assertEqual([row["observation"] for row in reexec_expectations],
+                             ["initial", "exec_success", "exec_success"] * 2)
+            self.assertEqual(len({row["pid"] for row in reexec_expectations}), 2)
+            self.assertEqual([row["token"] for row in reexec_expectations[:3]],
+                             ["stage-0", "stage-1", "stage-2"])
+            failed = next(s for s in portable["selectors"] if s["case"] == "wt_execfail")
+            self.assertEqual([row["observation"] for row in failed["executionExpectations"]],
+                             ["initial", "exec_attempt", "exec_success"] * 2)
+            self.assertTrue(all(row["outcome"] == "failed" for row in failed["executionExpectations"]
+                                if row["observation"] == "exec_attempt"))
+            refresh = next(s for s in portable["selectors"] if s["case"] == "wt_refresh")
+            self.assertEqual(len(refresh["refreshCandidates"]), 1)
             original = (output / "manifest.json").read_bytes()
             second = subprocess.run(command, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(second.returncode, 0)

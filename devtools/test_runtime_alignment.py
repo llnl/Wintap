@@ -13,7 +13,7 @@ class RuntimeAlignmentTests(unittest.TestCase):
     def test_all_tracked_csharp_targets_are_net10(self):
         projects = subprocess.check_output(
             ["git", "ls-files", "*.csproj"], cwd=ROOT, text=True).splitlines()
-        self.assertEqual(len(projects), 13)
+        self.assertEqual(len(projects), 14)
         for name in projects:
             with self.subTest(project=name):
                 project = ET.parse(ROOT / name)
@@ -29,10 +29,11 @@ class RuntimeAlignmentTests(unittest.TestCase):
                     reference = item.get("Include").replace("\\", "/")
                     self.assertTrue((ROOT / name).parent.joinpath(reference).is_file(), reference)
 
-    def test_sdk_baseline_is_exact_qualified_version(self):
-        sdk = json.loads((ROOT / "global.json").read_text())["sdk"]
-        self.assertEqual(sdk["version"], "10.0.402")
-        self.assertFalse(sdk["allowPrerelease"])
+    def test_sdk_policy_allows_stable_major10_roll_forward(self):
+        sdk = json.loads((ROOT / "global.json").read_text(encoding="utf-8"))["sdk"]
+        self.assertEqual(sdk["version"], "10.0.100")
+        self.assertEqual(sdk["rollForward"], "latestMinor")
+        self.assertIs(sdk["allowPrerelease"], False)
 
     def test_redirected_builds_exclude_old_generated_sources(self):
         props = ET.parse(ROOT / "Directory.Build.props")
@@ -54,16 +55,16 @@ class RuntimeAlignmentTests(unittest.TestCase):
                  "documentation/Linux Deployment Guide.md"]
         for name in names:
             with self.subTest(path=name):
-                self.assertNotRegex((ROOT / name).read_text(),
+                self.assertNotRegex((ROOT / name).read_text(encoding="utf-8"),
                                     r"net8\.0|(?:dotnet|aspnetcore)-(?:sdk|runtime)-8\.0|\.NET 8")
-        self.assertIn("DOTNET_TFM ?= net10.0", (ROOT / "wintap/Makefile").read_text())
+        self.assertIn("DOTNET_TFM ?= net10.0", (ROOT / "wintap/Makefile").read_text(encoding="utf-8"))
 
     def test_legacy_installers_are_explicitly_not_release_path(self):
-        note = (ROOT / "platform/windows/WintapSetup/README.md").read_text()
+        note = (ROOT / "platform/windows/WintapSetup/README.md").read_text(encoding="utf-8")
         self.assertIn("historical", note)
         self.assertIn("Do not build or deploy", note)
         self.assertIn("installer/Wintap.Installer.wixproj", note)
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("dotnet build installer/Wintap.Installer.wixproj", workflow)
         self.assertNotIn(".vdproj", workflow)
 

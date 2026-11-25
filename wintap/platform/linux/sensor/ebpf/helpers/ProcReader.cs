@@ -12,6 +12,13 @@ namespace gov.llnl.wintap.platform.linux.collect
     public static class ProcReader
     {
         private const int _SC_CLK_TCK = 2;
+        internal const int MaxCommandLineBytes = 256 * 1024;
+        internal const string ProcfsCommandLineSource = "procfs-cmdline";
+        internal const string CommandLineCaptured = "captured";
+        internal const string CommandLineEmpty = "empty";
+        internal const string CommandLineUnavailable = "unavailable";
+        internal const string CommandLineReadError = "read-error";
+        internal const string CommandLineTruncated = "truncated";
         private static readonly object passwdLock = new object();
         private static Dictionary<uint, string> passwdUserLookup;
         private static DateTime? cachedBootTimeUtc;
@@ -24,7 +31,10 @@ namespace gov.llnl.wintap.platform.linux.collect
         {
             var info = new ProcessInfo
             {
-                Pid = pid
+                Pid = pid,
+                CommandLine = string.Empty,
+                CommandLineSource = ProcfsCommandLineSource,
+                CommandLineCaptureStatus = CommandLineUnavailable
             };
 
             try
@@ -291,51 +301,78 @@ namespace gov.llnl.wintap.platform.linux.collect
         private static void ReadCmdline(string procDir, ref ProcessInfo info)
         {
             var cmdlinePath = $"{procDir}/cmdline";
-            if (!File.Exists(cmdlinePath))
-                return;
-
-            var cmdlineBytes = File.ReadAllBytes(cmdlinePath);
-            var args = new List<string>();
-            int start = 0;
-
-            for (int i = 0; i < cmdlineBytes.Length; i++)
-            {
-                if (cmdlineBytes[i] == 0)
-                {
-                    if (i > start)
-                    {
-                        args.Add(Encoding.UTF8.GetString(cmdlineBytes, start, i - start));
-                    }
-                    start = i + 1;
-                }
-            }
-
-            info.CommandLine = string.Join(" ", args);
+            CommandLineObservation observation = ReadCommandLineFile(cmdlinePath);
+            info.CommandLine = observation.CommandLine;
+            info.CommandLineSource = observation.Source;
+            info.CommandLineCaptureStatus = observation.Status;
         }
 
         private static void ReadCmdline(string procDir, ref FileEventContext context)
         {
             var cmdlinePath = $"{procDir}/cmdline";
-            if (!File.Exists(cmdlinePath))
-                return;
+            context.CommandLine = ReadCommandLineFile(cmdlinePath).CommandLine;
+        }
 
-            var cmdlineBytes = File.ReadAllBytes(cmdlinePath);
+        internal static CommandLineObservation ReadCommandLineFile(
+            string cmdlinePath,
+            Func<string, Stream> openRead = null,
+            int maxBytes = MaxCommandLineBytes)
+        {
+            if (maxBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxBytes));
+
+            if (!File.Exists(cmdlinePath))
+                return new CommandLineObservation(string.Empty, ProcfsCommandLineSource, CommandLineUnavailable);
+
+            try
+            {
+                using Stream input = openRead != null ? openRead(cmdlinePath) : File.OpenRead(cmdlinePath);
+                byte[] bytes = new byte[checked(maxBytes + 1)];
+                int total = 0;
+                while (total < bytes.Length)
+                {
+                    int read = input.Read(bytes, total, bytes.Length - total);
+                    if (read == 0) break;
+                    total += read;
+                }
+
+                bool truncated = total > maxBytes;
+                int renderLength = Math.Min(total, maxBytes);
+                if (truncated && renderLength > 0)
+                {
+                    int terminator = Array.LastIndexOf(bytes, (byte)0, renderLength - 1, renderLength);
+                    renderLength = terminator < 0 ? 0 : terminator + 1;
+                }
+
+                string commandLine = RenderCommandLine(bytes, renderLength);
+                string status = truncated ? CommandLineTruncated :
+                    commandLine.Length == 0 ? CommandLineEmpty : CommandLineCaptured;
+                return new CommandLineObservation(commandLine, ProcfsCommandLineSource, status);
+            }
+            catch
+            {
+                return new CommandLineObservation(string.Empty, ProcfsCommandLineSource, CommandLineReadError);
+            }
+        }
+
+        private static string RenderCommandLine(byte[] bytes, int length)
+        {
             var args = new List<string>();
             int start = 0;
-
-            for (int i = 0; i < cmdlineBytes.Length; i++)
+            for (int i = 0; i < length; i++)
             {
-                if (cmdlineBytes[i] == 0)
+                if (bytes[i] == 0)
                 {
                     if (i > start)
-                    {
-                        args.Add(Encoding.UTF8.GetString(cmdlineBytes, start, i - start));
-                    }
+                        args.Add(Encoding.UTF8.GetString(bytes, start, i - start));
                     start = i + 1;
                 }
             }
 
-            context.CommandLine = string.Join(" ", args);
+            if (start < length)
+                args.Add(Encoding.UTF8.GetString(bytes, start, length - start));
+
+            return string.Join(" ", args);
         }
 
         private static void ReadEnviron(string procDir, ref ProcessInfo info)
@@ -407,20 +444,7 @@ namespace gov.llnl.wintap.platform.linux.collect
 
         private static void ReadExe(string procDir, ref ProcessInfo info)
         {
-            var exePath = $"{procDir}/exe";
-            try
-            {
-                var fileInfo = new FileInfo(exePath);
-                if (fileInfo.Exists)
-                {
-                    info.ExecutablePath = fileInfo.LinkTarget ?? fileInfo.FullName;
-                }
-            }
-            catch
-            {
-                // Permission denied or not a symlink
-                info.ExecutablePath = null;
-            }
+            info.ExecutablePath = ProcessSensorHelper.ReadExecutableLink($"{procDir}/exe");
         }
 
         private static DateTime GetBootTimeUtc()
@@ -504,11 +528,27 @@ namespace gov.llnl.wintap.platform.linux.collect
             public string Name;
             public DateTime StartTimeUtc;
             public string CommandLine;
+            public string CommandLineSource;
+            public string CommandLineCaptureStatus;
             public string Username;
             public string Home;
             public string Shell;
             public string Cwd;
             public string ExecutablePath;
+        }
+
+        internal readonly struct CommandLineObservation
+        {
+            internal CommandLineObservation(string commandLine, string source, string status)
+            {
+                CommandLine = commandLine;
+                Source = source;
+                Status = status;
+            }
+
+            internal string CommandLine { get; }
+            internal string Source { get; }
+            internal string Status { get; }
         }
 
         public struct FileEventContext
